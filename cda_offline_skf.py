@@ -365,21 +365,14 @@ if __name__ == "__main__":
 
     print("\nTotal geral:", len(df_assets))
 
-"""##**3.4. DataFrame**"""
-
-display(df_assets)
-
-#download excel
-df_assets.to_excel("cda_offline_skf_assets.xlsx", index=False)
-
 """##**3.5. Carga no Sheets**"""
 
 # Nome da planilha
-nome_da_planilha = "cda_offline_skf_assets"
+planilha_id = "1W5S8o-sgZch0HpJC052O_TAkFzaz_BVrRC82j4ClsKQ"
 nome_da_aba = "Sheet1"
 
 # Abre a planilha
-planilha = gc.open(nome_da_planilha)
+planilha = gc.open_by_key(planilha_id)
 aba = planilha.worksheet(nome_da_aba)
 
 # Limpa a aba antes de escrever os dados (opcional)
@@ -502,21 +495,14 @@ if __name__ == "__main__":
 
         print("\nTotal geral:", len(df_overall))
 
-"""##**4.4. DataFrame**"""
-
-display(df_overall)
-
-#download excel
-df_overall.to_excel("cda_offline_skf_alarms.xlsx", index=False)
-
 """##**4.5. Carga no Sheets**"""
 
 # Nome da planilha
-nome_da_planilha = "cda_offline_skf_alarms"
+planilha_id = "1FxNznh_ouoDljB0Zw9pjH3GEEe0J520_AD4lNMzOM04"
 nome_da_aba = "Sheet1"
 
 # Abre a planilha
-planilha = gc.open(nome_da_planilha)
+planilha = gc.open_by_key(planilha_id)
 aba = planilha.worksheet(nome_da_aba)
 
 # Limpa a aba antes de escrever os dados (opcional)
@@ -639,31 +625,26 @@ df_last_measurement = convert_dates(
 )
 
 # remoção de timezone
-df_last_measurement = remove_timezone(
+df_lastmeasurement = remove_timezone(
     df_last_measurement,
     ["collectedDate"]
 )
 
-display(df_last_measurement)
-
-#download excel
-df_last_measurement.to_excel("cda_offline_skf_lastmeasurements.xlsx", index=False)
-
 """##**5.5. Carga no Sheets**"""
 
 # Nome da planilha
-nome_da_planilha = "cda_offline_skf_lastmeasurements"
+planilha_id = "15TXlKwMk7Q4glMeKVhi5h69sf0dUZnQDFNC68rhqX3Q"
 nome_da_aba = "Sheet1"
 
 # Abre a planilha
-planilha = gc.open(nome_da_planilha)
+planilha = gc.open_by_key(planilha_id)
 aba = planilha.worksheet(nome_da_aba)
 
 # Limpa a aba antes de escrever os dados (opcional)
 aba.clear()
 
 # Envia o DataFrame para a aba
-set_with_dataframe(aba, df_last_measurement)
+set_with_dataframe(aba, df_lastmeasurement)
 
 print("Dados enviados com sucesso para o Google Sheets!")
 
@@ -810,19 +791,14 @@ df_measurements = remove_timezone(
 # ordenação crescente
 df_measurements = df_measurements.sort_values(by="collectedDate")
 
-display(df_measurements)
-
-#download excel
-df_measurements.to_excel("cda_offline_skf_measurements.xlsx", index=False)
-
 """##**6.5. Carga no Sheets**"""
 
 # Nome da planilha e aba
-nome_da_planilha = "cda_offline_skf_measurements"
+planilha_id = "1UK6AatDxCdqg8NZxgL8ZThyCSNXOh03_AY4jtGaumXc"
 nome_da_aba = "Sheet1"
 
 # Abre a planilha e aba
-planilha = gc.open(nome_da_planilha)
+planilha = gc.open_by_key(planilha_id)
 aba = planilha.worksheet(nome_da_aba)
 
 # Lê os dados atuais da aba (já existentes)
@@ -958,32 +934,27 @@ df_last_condition = convert_dates(
 )
 
 # remoção de timezone
-df_last_condition = remove_timezone(
+df_lastcondition = remove_timezone(
     df_last_condition,
     ["collectDate",
     "conditionDate"]
 )
 
-display(df_last_condition)
-
-#download excel
-df_last_condition.to_excel("cda_offline_skf_lastcondition.xlsx", index=False)
-
 """##**7.5. Carga no Sheets**"""
 
 # Nome da planilha
-nome_da_planilha = "cda_offline_skf_lastcondition"
+planilha_id = "1vxJhkW0Zh0kdxU0tUKnT1nUCRLmI4FeJLcjsQylJk9E"
 nome_da_aba = "Sheet1"
 
 # Abre a planilha
-planilha = gc.open(nome_da_planilha)
+planilha = gc.open_by_key(planilha_id)
 aba = planilha.worksheet(nome_da_aba)
 
 # Limpa a aba antes de escrever os dados (opcional)
 aba.clear()
 
 # Envia o DataFrame para a aba
-set_with_dataframe(aba, df_last_condition)
+set_with_dataframe(aba, df_lastcondition)
 
 print("Dados enviados com sucesso para o Google Sheets!")
 
@@ -1159,19 +1130,14 @@ df_conditions = remove_timezone(
 # ordenação crescente
 df_conditions = df_conditions.sort_values(by="conditionDate")
 
-display(df_conditions)
-
-#download excel
-df_conditions.to_excel("cda_offline_skf_conditions.xlsx", index=False)
-
 """## **8.5. Carga no Sheets**"""
 
 # Nome da planilha e aba
-nome_da_planilha = "cda_offline_skf_conditions"
+planilha_id = "1-Hkx_2B5HauY71j0RDYXKS_09Ax34J0Dp6wUGRG32q4"
 nome_da_aba = "Sheet1"
 
 # Abre a planilha e aba
-planilha = gc.open(nome_da_planilha)
+planilha = gc.open_by_key(planilha_id)
 aba = planilha.worksheet(nome_da_aba)
 
 # Lê os dados atuais da aba (já existentes)
@@ -1315,19 +1281,14 @@ df_workorders = remove_timezone(
 # ordenação crescente
 df_workorders = df_workorders.sort_values(by="openingDate")
 
-display(df_workorders)
-
-#download excel
-df_workorders.to_excel("cda_offline_skf_notes.xlsx", index=False)
-
 """## **9.5. Carga no Sheets**"""
 
 # Nome da planilha
-nome_da_planilha = "cda_offline_skf_notes"
+planilha_id = "1dM1sHzskTNjd9Wc8wIQTG7dGWgyekVAZM-_wFYQp4tc"
 nome_da_aba = "Sheet1"
 
 # Abre a planilha
-planilha = gc.open(nome_da_planilha)
+planilha = gc.open_by_key(planilha_id)
 aba = planilha.worksheet(nome_da_aba)
 
 # Limpa a aba antes de escrever os dados
@@ -1353,426 +1314,3 @@ with open("log_execucao.json", "w") as f:
     json.dump(output_log, f, indent=4)
 
 print("Log gerado")
-
-"""# **11. PSEUDOCÓDIGO**
-
-# CDA Offline SKF
-
----
-
-## 1. CONFIGURAÇÕES INICIAIS
-
-```
-DEFINIR API_KEY
-DEFINIR SHORTNAMES = { "ubu": "BRAEO6001", "germano": "BRAEO6002" }
-DEFINIR BASE_URL = "https://analystapi.repcenter.skf.com/"
-DEFINIR HEADERS = { "x-api-key": API_KEY, "Content-Type": "application/json" }
-
-DEFINIR FIELDS_ASSETS        (campos: assetId, assetName, criticality, conditionIndex, ...)
-DEFINIR FIELDS_ALARMS        (campos: assetId, pointId, alarmMethod, alertHigh, dangerLow, ...)
-DEFINIR FIELDS_MEASUREMENTS  (campos: assetId, pointId, unit, collectedDate, overallValue, ...)
-DEFINIR FIELDS_CONDITIONS    (campos: assetId, conditionState, diagnostic, workOrder.id, ...)
-DEFINIR FIELDS_WORKORDERS    (campos: assetId, deadline, priority, intervention.date, ...)
-
-DEFINIR LOGS = []  // lista global para registro de eventos
-```
-
----
-
-## 2. FUNÇÕES UTILITÁRIAS
-
-### 2.1. add_log(status, endpoint, origem, ...)
-```
-FUNÇÃO add_log(status, endpoint, origem, asset_id, tentativa, tempo, mensagem):
-    ADICIONAR ao LOGS:
-        timestamp = data/hora atual (UTC)
-        endpoint, status, origem, assetId, tentativa, tempo, mensagem
-```
-
-### 2.2. request_with_retry(url, payload, ...)
-```
-FUNÇÃO request_with_retry(url, payload, origem, endpoint, asset_id, retries=5, backoff=2):
-
-    PARA tentativa DE 0 ATÉ retries-1:
-        registrar tempo de início
-
-        TENTAR:
-            resposta = POST(url, headers=HEADERS, json=payload, timeout=30)
-            tempo_decorrido = agora - início
-
-            SE resposta.status == 200:
-                registrar log de SUCESSO
-                RETORNAR resposta
-
-            SENÃO SE status EM [429, 500, 502, 503, 504]:
-                registrar log de RETRY
-                aguardar backoff^tentativa segundos
-                CONTINUAR loop
-
-            SENÃO:
-                registrar log de ERRO
-                LANÇAR exceção com texto do erro
-
-        EXCETO qualquer erro de rede:
-            registrar log de RETRY_NETWORK
-            aguardar backoff^tentativa segundos
-            CONTINUAR loop
-
-    registrar log FAIL (esgotou tentativas)
-    LANÇAR exceção "Falhou após N tentativas"
-```
-
-### 2.3. convert_dates(df, colunas)
-```
-FUNÇÃO convert_dates(df, colunas):
-    PARA CADA coluna EM colunas:
-        SE coluna existe no df E é texto:
-            SE amostra dos valores contém "," e "GMT":
-                converter coluna para datetime com timezone UTC
-    RETORNAR df
-```
-
-### 2.4. remove_timezone(df, colunas)
-```
-FUNÇÃO remove_timezone(df, colunas):
-    PARA CADA coluna EM colunas:
-        SE coluna existe no df:
-            remover informação de timezone da coluna
-    RETORNAR df
-```
-
----
-
-## 3. ASSETS
-
-### Busca paginada por origem
-```
-FUNÇÃO fetch_assets(shortname, origem):
-    url = BASE_URL + shortname + "/assets"
-    cursor = NULO
-    all_data = []
-
-    LOOP:
-        SE cursor existe:
-            expressão = filtro com cursor
-        SENÃO:
-            expressão = filtro com rowsPerPage=300
-
-        resposta = request_with_retry(url, expressão, ...)
-        data, next_cursor = extrair de resposta.json()
-
-        SE data vazia: registrar log EMPTY
-        adicionar "origem" em cada item
-        all_data += data
-
-        SE next_cursor não existe: SAIR loop
-        cursor = next_cursor
-
-    registrar log FINAL com total
-    RETORNAR all_data
-```
-
-### Execução paralela (2 threads)
-```
-FUNÇÃO fetch_all_assets_parallel():
-    results = []
-    PARALELAMENTE (2 threads):
-        PARA CADA (nome, shortname) EM SHORTNAMES:
-            executar fetch_assets(shortname, nome)
-    AGREGAR resultados
-    RETORNAR results
-```
-
-### Main Assets
-```
-ativos = fetch_all_assets_parallel()
-df_assets = DataFrame(ativos)
-EXIBIR resumo por origem e total
-SALVAR Excel "cda_offline_skf_assets.xlsx"
-ENVIAR df_assets para Google Sheets "cda_offline_skf_assets"
-```
-
----
-
-## 4. OVERALL ALARMS
-
-### Busca paginada por origem
-```
-FUNÇÃO fetch_overall_alarm(shortname, origem):
-    url = BASE_URL + shortname + "/overall-alarm"
-    cursor = NULO; all_data = []
-
-    LOOP:
-        montar expressão (com ou sem cursor)
-        resposta = request_with_retry(url, expressão, ...)
-        data, next_cursor = extrair de resposta.json()
-
-        SE data vazia: registrar log EMPTY
-        adicionar "origem" em cada item
-        all_data += data
-
-        SE next_cursor não existe: SAIR loop
-        cursor = next_cursor
-
-    registrar log FINAL
-    RETORNAR all_data
-```
-
-### Execução paralela e Main
-```
-FUNÇÃO fetch_all_overall_alarm():
-    PARALELAMENTE (2 threads): executar fetch_overall_alarm por shortname
-    RETORNAR resultados agregados
-
-df_overall = DataFrame(resultados)
-SALVAR Excel "cda_offline_skf_alarms.xlsx"
-ENVIAR para Google Sheets "cda_offline_skf_alarms"
-```
-
----
-
-## 5. LAST MEASUREMENT (por ativo)
-
-### Busca por ativo
-```
-FUNÇÃO fetch_last_measurement_by_asset(shortname, origem, asset_id):
-    SE asset_id inválido: RETORNAR []
-
-    url = BASE_URL + shortname + "/lastmeasurement"
-    expressão = filtro por assetId
-
-    resposta = request_with_retry(url, expressão, ...)
-    data = extrair de resposta.json()
-
-    SE data vazia: registrar log EMPTY; RETORNAR []
-
-    adicionar "origem" e "assetId" em cada item
-    RETORNAR data
-```
-
-### Execução paralela (10 threads)
-```
-FUNÇÃO fetch_all_last_measurements(df_assets):
-    FILTRAR df_assets: manter apenas ativos com assetStatus válido
-
-    PARALELAMENTE (10 threads):
-        PARA CADA ativo no df_assets:
-            executar fetch_last_measurement_by_asset(shortname, origem, assetId)
-
-    RETORNAR resultados agregados
-```
-
-### Main Last Measurement
-```
-df_assets["shortname"] = mapear origem → shortname
-dados = fetch_all_last_measurements(df_assets)
-df_last_measurement = DataFrame(dados)
-CONVERTER colunas de data (collectedDate)
-REMOVER timezone
-SALVAR Excel "cda_offline_skf_lastmeasurements.xlsx"
-ENVIAR para Google Sheets "cda_offline_skf_lastmeasurements"
-```
-
----
-
-## 6. MEASUREMENTS POR PERÍODO
-
-### Busca paginada por ativo e período
-```
-FUNÇÃO fetch_measurements_by_asset(shortname, origem, asset_id, start_date, end_date):
-    SE asset_id inválido: RETORNAR []
-
-    url = BASE_URL + shortname + "/measurements"
-    cursor = NULO; all_data = []
-
-    LOOP:
-        expressão = filtro por assetId + datas + cursor (se existir)
-        resposta = request_with_retry(url, expressão, ...)
-        data, next_cursor = extrair
-
-        adicionar "origem" e "assetId" em cada item
-        all_data += data
-
-        SE next_cursor não existe: SAIR loop
-        cursor = next_cursor
-
-    RETORNAR all_data
-```
-
-### Main Measurements por Período
-```
-// Carga incremental: período = ontem (D-1)
-start_date = ontem 00:00:00
-end_date   = ontem 23:59:59
-
-PARALELAMENTE (4 threads): executar fetch_measurements_by_asset por ativo
-df_measurements = DataFrame(resultados)
-CONVERTER e REMOVER timezone de "collectedDate"
-ORDENAR por "collectedDate" crescente
-SALVAR Excel "cda_offline_skf_measurements.xlsx"
-
-// Carga incremental no Sheets (sem duplicar):
-df_existente = ler dados atuais do Sheets
-df_novos = df_measurements - df_existente (apenas registros novos)
-SE df_novos não vazio:
-    INSERIR df_novos abaixo da última linha existente
-SENÃO:
-    IMPRIMIR "Nenhum dado novo"
-```
-
----
-
-## 7. LAST CONDITION (por ativo)
-
-### Busca por ativo
-```
-FUNÇÃO fetch_last_condition(shortname, origem, asset_id):
-    url = BASE_URL + "v2/" + shortname + "/lastcondition"
-    expressão = filtro por assetId
-
-    resposta = request_with_retry(url, expressão, ...)
-    data = extrair de resposta.json()
-
-    SE data vazia: registrar log EMPTY; RETORNAR []
-    adicionar "origem" e "assetId" em cada item
-    RETORNAR data
-```
-
-### Main Last Condition
-```
-PARALELAMENTE (12 threads): executar fetch_last_condition por ativo ativo
-df_last_condition = DataFrame(resultados)
-EXPANDIR coluna "workOrder" (JSON aninhado) → prefixo "workOrder"
-CONVERTER e REMOVER timezone de "collectDate", "conditionDate"
-SALVAR Excel "cda_offline_skf_lastcondition.xlsx"
-ENVIAR para Google Sheets "cda_offline_skf_lastcondition"
-```
-
----
-
-## 8. CONDITIONS POR PERÍODO
-
-### Busca paginada por ativo e período
-```
-FUNÇÃO fetch_conditions_by_asset(shortname, origem, asset_id, start_date, end_date):
-    SE asset_id inválido: RETORNAR []
-
-    url = BASE_URL + "v2/" + shortname + "/conditions"
-    cursor = NULO; all_data = []
-
-    LOOP:
-        expressão = filtro por assetId + datas + cursor (se existir)
-        resposta = request_with_retry(url, expressão, ...)
-        data, next_cursor = extrair
-
-        adicionar "origem" e "assetId" em cada item
-        all_data += data
-
-        SE next_cursor não existe: SAIR loop
-        cursor = next_cursor
-
-    registrar log FINAL
-    RETORNAR all_data
-```
-
-### Main Conditions por Período
-```
-// Carga incremental (D-1)
-start_date = ontem 00:00:00
-end_date   = ontem 23:59:59
-
-PARALELAMENTE (4 threads): executar fetch_conditions_by_asset por ativo
-df_conditions = DataFrame(resultados)
-EXPANDIR coluna "workOrder" → prefixo "workOrder_"
-CONVERTER e REMOVER timezone de "collectDate", "conditionDate"
-ORDENAR por "conditionDate" crescente
-SALVAR Excel "cda_offline_skf_conditions.xlsx"
-
-// Carga incremental no Sheets (sem duplicar):
-df_existente = ler dados atuais do Sheets
-df_novos = df_conditions - df_existente
-SE df_novos não vazio: INSERIR abaixo da última linha
-SENÃO: IMPRIMIR "Nenhum dado novo"
-```
-
----
-
-## 9. WORKORDERS POR PERÍODO
-
-### Busca paginada por origem
-```
-FUNÇÃO fetch_workorders(shortname, origem, start_date, end_date):
-    url = BASE_URL + shortname + "/workorders"
-    cursor = NULO; all_data = []
-
-    LOOP:
-        expressão = filtro por datas de abertura + cursor (se existir)
-        resposta = request_with_retry(url, expressão, ...)
-        data, next_cursor = extrair
-
-        SE data vazia: registrar log EMPTY
-        adicionar "origem" em cada item
-        all_data += data
-
-        SE next_cursor não existe: SAIR loop
-        cursor = next_cursor
-
-    registrar log FINAL
-    RETORNAR all_data
-```
-
-### Main Workorders
-```
-// Carga completa: de 2020-01-01 até ontem
-start_date = "2020-01-01 00:00:00"
-end_date   = ontem 23:59:59
-
-PARALELAMENTE (2 threads): executar fetch_workorders por shortname
-df_workorders = DataFrame(resultados)
-EXPANDIR coluna "intervention" → prefixo "intervention_"
-CONVERTER e REMOVER timezone de "scheduledDate", "openingDate", "intervention_date"
-ORDENAR por "openingDate" crescente
-SALVAR Excel "cda_offline_skf_notes.xlsx"
-ENVIAR para Google Sheets "cda_offline_skf_notes" (substitui tudo)
-```
-
----
-
-## 10. LOG FINAL
-
-```
-df_log = DataFrame(LOGS)
-
-output_log = {
-    "resumo"  : contagem de status (SUCCESS, RETRY, ERROR, FAIL, ...)
-    "erros"   : apenas registros com status ERROR ou FAIL
-    "total"   : total de entradas no log
-    "logs"    : lista completa de LOGS
-}
-
-SALVAR output_log em "log_execucao.json"
-IMPRIMIR "Log gerado"
-```
-
----
-
-## FLUXO GERAL (visão macro)
-
-```
-INÍCIO
-│
-├─ Configurar credenciais, URLs e campos da API
-├─ Autenticar no Google Sheets
-│
-├─ [3] Buscar ASSETS         → df_assets         → Excel + Sheets
-├─ [4] Buscar ALARMS         → df_overall        → Excel + Sheets
-├─ [5] Buscar LAST MEASURE   → df_last_measurement → Excel + Sheets
-├─ [6] Buscar MEASURES D-1   → df_measurements   → Excel + Sheets (incremental)
-├─ [7] Buscar LAST CONDITION → df_last_condition → Excel + Sheets
-├─ [8] Buscar CONDITIONS D-1 → df_conditions     → Excel + Sheets (incremental)
-├─ [9] Buscar WORKORDERS     → df_workorders     → Excel + Sheets
-│
-└─ [10] Gerar log_execucao.json
-FIM
-```
-"""
