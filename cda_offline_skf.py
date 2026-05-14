@@ -12,6 +12,10 @@ import pandas as pd
 from datetime import datetime, timedelta, UTC
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
+import gspread
+from google.oauth2.service_account import Credentials
+from gspread_dataframe import get_as_dataframe, set_with_dataframe
+
 """# **2. DADOS DE ACESSO**
 
 ##**2.1. API Key**
@@ -264,12 +268,6 @@ def remove_timezone(df, columns):
 
 ###**2.7.1. Autenticação no Sheets**
 """
-
-# bibliotecas do Google
-import gspread
-from google.colab import auth
-from google.auth import default
-from gspread_dataframe import get_as_dataframe, set_with_dataframe
 
 # Lê a variável de ambiente com o conteúdo do JSON da conta de serviço
 service_account_info = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT"])
