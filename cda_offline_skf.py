@@ -22,18 +22,18 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 ##**2.1. API Key**
 """
 
-API_KEY = "vU6PB94IWrRqSCNrMWfy36wB4pHUdMO1FUonfZw9"
+API_KEY = os.getenv("SKF_KEY")
 
 """##**2.2. Shortname**"""
 
 SHORTNAMES = {
-  "ubu" : "BRAEO6001",
-  "germano" : "BRAEO6002"
+  "ubu" : os.getenv("SKF_UBU"),
+  "germano" : os.getenv("SKF_GERMANO")
 }
 
 """##**2.3. URL's**"""
 
-BASE_URL = "https://analystapi.repcenter.skf.com/"
+BASE_URL = os.getenv("SKF_URL")
 
 """##**2.4. Header**"""
 
@@ -276,11 +276,19 @@ from google.colab import auth
 from google.auth import default
 from gspread_dataframe import get_as_dataframe, set_with_dataframe
 
-# autentica no Google
-auth.authenticate_user()
+# Lê a variável de ambiente com o conteúdo do JSON da conta de serviço
+service_account_info = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT"])
 
-# use 'default' para pegar as credenciais no formato esperado pelo gspread
-creds, _ = default()
+# Define os escopos de acesso (Google Sheets)
+SCOPES = [
+    'https://www.googleapis.com/auth/spreadsheets',
+    'https://www.googleapis.com/auth/drive'
+]
+
+# Cria as credenciais usando o conteúdo do secret
+creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
+
+# Autentica no Google Sheets
 gc = gspread.authorize(creds)
 
 """# **3. REQUISIÇÃO: ASSETS**
