@@ -818,6 +818,31 @@ if not df_novos.empty:
 else:
     print("Nenhuma medição nova para inserir")
 
+"""##**6.6. Tratamento de duplicatas**"""
+
+# Nome da planilha e aba
+planilha_id = "1UK6AatDxCdqg8NZxgL8ZThyCSNXOh03_AY4jtGaumXc"
+nome_da_aba = "Sheet1"
+
+# Abre a planilha e aba
+planilha = gc.open_by_key(planilha_id)
+aba = planilha.worksheet(nome_da_aba)
+
+# Lê os dados da aba
+df = get_as_dataframe(aba, evaluate_formulas=True).dropna(how="all")
+
+# Remove duplicatas com base nas colunas chave
+colunas_chave = ['assetId', 'assetName', 'pointId', 'pointName', 'channel', 'unit', 'pointStatus', 'overallValue', 'origem']
+df_limpo = df.drop_duplicates(subset=colunas_chave, keep='first')
+
+# Limpa aba (opcional, mas garante que não fica lixo antigo abaixo)
+aba.clear()
+
+# Reescreve os dados limpos na planilha (com cabeçalho)
+set_with_dataframe(aba, df_limpo, include_column_header=True)
+
+print(f"Removidas {len(df) - len(df_limpo)} duplicatas. Planilha atualizada com {len(df_limpo)} registros únicos.")
+
 """#**7. REQUISIÇÃO: LAST CONDITION**
 
 ##**7.1. Busca por ativo**
@@ -1156,6 +1181,31 @@ if not df_novos.empty:
     print(f"{len(df_novos)} novas condições adicionadas à planilha!")
 else:
     print("Nenhuma condição nova para inserir")
+
+"""## **8.6. Tratamento de duplicatas**"""
+
+# Nome da planilha e aba
+planilha_id = "1-Hkx_2B5HauY71j0RDYXKS_09Ax34J0Dp6wUGRG32q4"
+nome_da_aba = "Sheet1"
+
+# Abre a planilha e aba
+planilha = gc.open_by_key(planilha_id)
+aba = planilha.worksheet(nome_da_aba)
+
+# Lê os dados da aba
+df = get_as_dataframe(aba, evaluate_formulas=True).dropna(how="all")
+
+# Remove duplicatas com base nas colunas chave
+colunas_chave = ['assetId', 'collectDate', 'conditionDate', 'conditionId', 'conditionState', 'inspectionType', 'trend', 'technique', 'status', 'diagnostic', 'observation', 'author', 'workOrder', 'origem']
+df_limpo = df.drop_duplicates(subset=colunas_chave, keep='first')
+
+# Limpa aba (opcional, mas garante que não fica lixo antigo abaixo)
+aba.clear()
+
+# Reescreve os dados limpos na planilha (com cabeçalho)
+set_with_dataframe(aba, df_limpo, include_column_header=True)
+
+print(f"Removidas {len(df) - len(df_limpo)} duplicatas. Planilha atualizada com {len(df_limpo)} registros únicos.")
 
 """#**9. REQUISIÇÃO: WORKORDER BY PERIOD**
 
