@@ -814,9 +814,9 @@ if not df_novos.empty:
     # Número de linhas já existentes (para inserir a partir da próxima linha vazia)
     ultima_linha = len(df_existente) + 2  # +1 para header, +1 para próxima
     set_with_dataframe(aba, df_novos, row=ultima_linha, col=1, include_column_header=False)
-    print(f"{len(df_novos)} novas condições adicionadas à planilha!")
+    print(f"{len(df_novos)} novas medições adicionadas à planilha!")
 else:
-    print("Nenhuma condição nova para inserir")
+    print("Nenhuma medição nova para inserir")
 
 """#**7. REQUISIÇÃO: LAST CONDITION**
 
