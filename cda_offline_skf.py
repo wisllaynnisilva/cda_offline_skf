@@ -26,14 +26,11 @@ API_KEY = os.getenv("SKF_KEY")
 
 """##**2.2. Shortname**"""
 
-SHORTNAMES = {
-  "ubu" : os.getenv("SKF_UBU"),
-  "germano" : os.getenv("SKF_GERMANO")
-}
+SHORTNAMES = json.loads(os.environ["SKF_SHORTNAMES"])
 
 """##**2.3. URL's**"""
 
-BASE_URL = os.getenv("SKF_URL")
+BASE_URL = "https://analystapi.repcenter.skf.com/"
 
 """##**2.4. Header**"""
 
@@ -41,9 +38,6 @@ HEADERS = {
     "x-api-key": API_KEY,
     "Content-Type": "application/json"
 }
-
-print(BASE_URL)
-print(SHORTNAMES)
 
 """##**2.5. Fields**
 
