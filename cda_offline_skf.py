@@ -4,6 +4,7 @@
 # **1. BIBLIOTECAS**
 """
 
+import os
 import time
 import json
 import logging
