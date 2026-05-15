@@ -22,18 +22,15 @@ from gspread_dataframe import get_as_dataframe, set_with_dataframe
 ##**2.1. API Key**
 """
 
-API_KEY = "vU6PB94IWrRqSCNrMWfy36wB4pHUdMO1FUonfZw9"
+API_KEY = os.getenv("SKF_KEY")
 
 """##**2.2. Shortname**"""
 
-SHORTNAMES = {
-  "ubu" : "BRAEO6001",
-  "germano" : "BRAEO6002"
-}
+SHORTNAMES = json.loads(os.environ["SKF_SHORTNAMES"])
 
 """##**2.3. URL's**"""
 
-BASE_URL = "https://analystapi.repcenter.skf.com"
+BASE_URL = os.getenv("SKF_URL")
 
 """##**2.4. Header**"""
 
