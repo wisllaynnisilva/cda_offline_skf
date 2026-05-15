@@ -33,7 +33,7 @@ SHORTNAMES = {
 
 """##**2.3. URL's**"""
 
-BASE_URL = "https://analystapi.repcenter.skf.com/"
+BASE_URL = "https://analystapi.repcenter.skf.com"
 
 """##**2.4. Header**"""
 
