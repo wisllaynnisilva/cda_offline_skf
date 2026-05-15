@@ -42,6 +42,9 @@ HEADERS = {
     "Content-Type": "application/json"
 }
 
+print(BASE_URL)
+print(SHORTNAMES)
+
 """##**2.5. Fields**
 
 ###**2.5.1. Assets**
