@@ -9,7 +9,7 @@ import json
 import logging
 import requests
 import pandas as pd
-from datetime import datetime, timedelta, UTC
+from datetime import datetime, timedelta, timezone
 from concurrent.futures import ThreadPoolExecutor, as_completed
 
 import gspread
@@ -186,7 +186,7 @@ LOGS = []
 
 def add_log(status, endpoint, origem, asset_id=None, tentativa=None, tempo=None, mensagem=None):
     LOGS.append({
-        "timestamp": datetime.now(UTC).isoformat(timespec="seconds"),
+        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
         "endpoint": endpoint,
         "status": status,
         "origem": origem,
@@ -754,7 +754,7 @@ if __name__ == "__main__":
     #end_date   = "2026-02-21 23:59:59"
 
     # carga incremental (D-1)
-    ontem = datetime.now(UTC) - timedelta(days=1)
+    ontem = datetime.now(timezone.utc) - timedelta(days=1)
 
     start_date = ontem.strftime("%Y-%m-%d 00:00:00")
     end_date   = ontem.strftime("%Y-%m-%d 23:59:59")
@@ -1085,7 +1085,7 @@ if __name__ == "__main__":
     #end_date   = "2026-02-21 23:59:59"
 
     # carga incremental (D-1)
-    ontem = datetime.now(UTC) - timedelta(days=1)
+    ontem = datetime.now(timezone.utc) - timedelta(days=1)
 
     start_date = ontem.strftime("%Y-%m-%d 00:00:00")
     end_date   = ontem.strftime("%Y-%m-%d 23:59:59")
@@ -1238,7 +1238,7 @@ def fetch_all_workorders(start_date, end_date):
 if __name__ == "__main__":
 
     # carga completa
-    ontem = datetime.now(UTC) - timedelta(days=1)
+    ontem = datetime.now(timezone.utc) - timedelta(days=1)
 
     start_date = "2020-01-01 00:00:00"
     end_date   = ontem.strftime("%Y-%m-%d 23:59:59")
