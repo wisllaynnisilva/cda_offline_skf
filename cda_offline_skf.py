@@ -1167,7 +1167,7 @@ aba = planilha.worksheet(nome_da_aba)
 df_existente = get_as_dataframe(aba, evaluate_formulas=True).dropna(how="all")
 
 # Garante que colunas estão no mesmo formato e ordem
-colunas_chave = ['assetId', 'collectDate', 'conditionDate', 'conditionId', 'conditionState', 'inspectionType', 'trend', 'technique', 'status', 'diagnostic', 'observation', 'author', 'workOrder', 'origem']
+colunas_chave = ['assetId', 'collectDate', 'conditionDate', 'conditionId', 'conditionState', 'inspectionType', 'trend', 'technique', 'status', 'diagnostic', 'observation', 'author', 'origem', 'workOrderid']
 df_existente = df_existente[colunas_chave].dropna()
 
 # Remove duplicados e encontra apenas as linhas novas
