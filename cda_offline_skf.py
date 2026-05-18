@@ -1196,7 +1196,7 @@ aba = planilha.worksheet(nome_da_aba)
 df = get_as_dataframe(aba, evaluate_formulas=True).dropna(how="all")
 
 # Remove duplicatas com base nas colunas chave
-colunas_chave = ['assetId', 'collectDate', 'conditionDate', 'conditionId', 'conditionState', 'inspectionType', 'trend', 'technique', 'status', 'diagnostic', 'observation', 'author', 'workOrder', 'origem']
+colunas_chave = ['assetId', 'collectDate', 'conditionDate', 'conditionId', 'conditionState', 'inspectionType', 'trend', 'technique', 'status', 'diagnostic', 'observation', 'author', 'origem', 'workOrderid']
 df_limpo = df.drop_duplicates(subset=colunas_chave, keep='first')
 
 # Limpa aba (opcional, mas garante que não fica lixo antigo abaixo)
