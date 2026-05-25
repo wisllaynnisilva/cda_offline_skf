@@ -764,6 +764,7 @@ if __name__ == "__main__":
 
     if not dados:
         print("Nenhum dado retornado da API")
+        df_measurements = pd.DataFrame()
     else:
         df_measurements = pd.DataFrame(dados)
 
@@ -795,28 +796,72 @@ df_measurements = df_measurements.sort_values(by="collectedDate")
 planilha_id = "1UK6AatDxCdqg8NZxgL8ZThyCSNXOh03_AY4jtGaumXc"
 nome_da_aba = "Sheet1"
 
-# Abre a planilha e aba
-planilha = gc.open_by_key(planilha_id)
-aba = planilha.worksheet(nome_da_aba)
-
-# Lê os dados atuais da aba (já existentes)
-df_existente = get_as_dataframe(aba, evaluate_formulas=True).dropna(how="all")
-
-# Garante que colunas estão no mesmo formato e ordem
-colunas_chave = ['assetId', 'assetName', 'pointId', 'pointName', 'channel', 'unit', 'pointStatus', 'overallValue', 'origem']
-df_existente = df_existente[colunas_chave].dropna()
-
-# Remove duplicados e encontra apenas as linhas novas
-df_novos = df_measurements[~df_measurements.isin(df_existente.to_dict(orient='list')).all(axis=1)]
-
-# Se houver novos registros, adiciona abaixo
-if not df_novos.empty:
-    # Número de linhas já existentes (para inserir a partir da próxima linha vazia)
-    ultima_linha = len(df_existente) + 2  # +1 para header, +1 para próxima
-    set_with_dataframe(aba, df_novos, row=ultima_linha, col=1, include_column_header=False)
-    print(f"{len(df_novos)} novas medições adicionadas à planilha!")
+# Só processa se houver medições
+if df_measurements.empty:
+    print("Nenhuma medição nova para processar.")
 else:
-    print("Nenhuma medição nova para inserir")
+    # Abre a planilha e aba
+    planilha = gc.open_by_key(planilha_id)
+    aba = planilha.worksheet(nome_da_aba)
+
+    # Lê dados existentes
+    df_existente = get_as_dataframe(
+        aba,
+        evaluate_formulas=True
+    ).dropna(how="all")
+
+    # Colunas chave para comparação
+    colunas_chave = [
+        'assetId',
+        'assetName',
+        'pointId',
+        'pointName',
+        'channel',
+        'unit',
+        'pointStatus',
+        'overallValue',
+        'origem'
+    ]
+
+    # Se a planilha estiver vazia
+    if df_existente.empty:
+        set_with_dataframe(aba, df_measurements)
+        print(f"{len(df_measurements)} medições inseridas (planilha vazia).")
+
+    else:
+        # garante colunas existentes
+        df_existente = df_existente.reindex(columns=colunas_chave)
+        df_measurements = df_measurements.reindex(columns=colunas_chave)
+
+        # padroniza tipos para comparação segura
+        df_existente = df_existente.astype(str)
+        df_measurements = df_measurements.astype(str)
+
+        # merge para encontrar somente novos
+        df_novos = df_measurements.merge(
+            df_existente,
+            on=colunas_chave,
+            how="left",
+            indicator=True
+        )
+
+        df_novos = df_novos[df_novos["_merge"] == "left_only"].drop(columns=["_merge"])
+
+        if not df_novos.empty:
+            ultima_linha = len(df_existente) + 2
+
+            set_with_dataframe(
+                aba,
+                df_novos,
+                row=ultima_linha,
+                col=1,
+                include_column_header=False
+            )
+
+            print(f"{len(df_novos)} novas medições adicionadas à planilha!")
+
+        else:
+            print("Nenhuma medição nova para inserir")
 
 """##**6.6. Tratamento de duplicatas**"""
 
@@ -1120,6 +1165,7 @@ if __name__ == "__main__":
 
     if not dados:
         print("Nenhum dado retornado da API")
+        df_conditions = pd.DataFrame()
     else:
         df_conditions = pd.DataFrame(dados)
 
@@ -1159,28 +1205,81 @@ df_conditions = df_conditions.sort_values(by="conditionDate")
 planilha_id = "1-Hkx_2B5HauY71j0RDYXKS_09Ax34J0Dp6wUGRG32q4"
 nome_da_aba = "Sheet1"
 
-# Abre a planilha e aba
-planilha = gc.open_by_key(planilha_id)
-aba = planilha.worksheet(nome_da_aba)
+# Só processa se houver condições
+if df_conditions.empty:
+    print("Nenhuma condição nova para processar.")
 
-# Lê os dados atuais da aba (já existentes)
-df_existente = get_as_dataframe(aba, evaluate_formulas=True).dropna(how="all")
-
-# Garante que colunas estão no mesmo formato e ordem
-colunas_chave = ['assetId', 'collectDate', 'conditionDate', 'conditionId', 'conditionState', 'inspectionType', 'trend', 'technique', 'status', 'diagnostic', 'observation', 'author', 'origem', 'workOrderid']
-df_existente = df_existente[colunas_chave].dropna()
-
-# Remove duplicados e encontra apenas as linhas novas
-df_novos = df_conditions[~df_conditions.isin(df_existente.to_dict(orient='list')).all(axis=1)]
-
-# Se houver novos registros, adiciona abaixo
-if not df_novos.empty:
-    # Número de linhas já existentes (para inserir a partir da próxima linha vazia)
-    ultima_linha = len(df_existente) + 2  # +1 para header, +1 para próxima
-    set_with_dataframe(aba, df_novos, row=ultima_linha, col=1, include_column_header=False)
-    print(f"{len(df_novos)} novas condições adicionadas à planilha!")
 else:
-    print("Nenhuma condição nova para inserir")
+    # Abre a planilha e aba
+    planilha = gc.open_by_key(planilha_id)
+    aba = planilha.worksheet(nome_da_aba)
+
+    # Lê os dados existentes
+    df_existente = get_as_dataframe(
+        aba,
+        evaluate_formulas=True
+    ).dropna(how="all")
+
+    # Colunas chave para comparação
+    colunas_chave = [
+        'assetId',
+        'collectDate',
+        'conditionDate',
+        'conditionId',
+        'conditionState',
+        'inspectionType',
+        'trend',
+        'technique',
+        'status',
+        'diagnostic',
+        'observation',
+        'author',
+        'origem',
+        'workOrderid'
+    ]
+
+    # Se planilha estiver vazia
+    if df_existente.empty:
+        set_with_dataframe(aba, df_conditions)
+        print(f"{len(df_conditions)} condições inseridas (planilha vazia).")
+
+    else:
+        # garante colunas
+        df_existente = df_existente.reindex(columns=colunas_chave)
+        df_conditions = df_conditions.reindex(columns=colunas_chave)
+
+        # padroniza tipo para comparação
+        df_existente = df_existente.astype(str)
+        df_conditions = df_conditions.astype(str)
+
+        # compara linha completa
+        df_novos = df_conditions.merge(
+            df_existente,
+            on=colunas_chave,
+            how="left",
+            indicator=True
+        )
+
+        df_novos = df_novos[
+            df_novos["_merge"] == "left_only"
+        ].drop(columns=["_merge"])
+
+        # insere somente novos
+        if not df_novos.empty:
+            ultima_linha = len(df_existente) + 2
+
+            set_with_dataframe(
+                aba,
+                df_novos,
+                row=ultima_linha,
+                col=1,
+                include_column_header=False
+            )
+
+            print(f"{len(df_novos)} novas condições adicionadas à planilha!")
+
+        else:
+            print("Nenhuma condição nova para inserir")
 
 """## **8.6. Tratamento de duplicatas**"""
 
@@ -1295,6 +1394,7 @@ if __name__ == "__main__":
 
     if not dados:
         print("Nenhum dado retornado da API")
+        df_workorders = pd.DataFrame()
     else:
         df_workorders = pd.DataFrame(dados)
 
@@ -1335,17 +1435,22 @@ df_workorders = df_workorders.sort_values(by="openingDate")
 planilha_id = "1dM1sHzskTNjd9Wc8wIQTG7dGWgyekVAZM-_wFYQp4tc"
 nome_da_aba = "Sheet1"
 
-# Abre a planilha
-planilha = gc.open_by_key(planilha_id)
-aba = planilha.worksheet(nome_da_aba)
+# Só processa se houver dados
+if df_workorders.empty:
+    print("Nenhum workorder retornado. Planilha não foi alterada.")
 
-# Limpa a aba antes de escrever os dados
-aba.clear()
+else:
+    # Abre a planilha
+    planilha = gc.open_by_key(planilha_id)
+    aba = planilha.worksheet(nome_da_aba)
 
-# Envia o DataFrame para a aba
-set_with_dataframe(aba, df_workorders)
+    # Limpa a aba antes de escrever os dados
+    aba.clear()
 
-print("Dados enviados com sucesso para o Google Sheets!")
+    # Envia o DataFrame para a aba
+    set_with_dataframe(aba, df_workorders)
+
+    print(f"{len(df_workorders)} workorders enviados com sucesso para o Google Sheets!")
 
 """#**10. LOG**"""
 
