@@ -775,20 +775,26 @@ if __name__ == "__main__":
 
 """##**6.4. DataFrame**"""
 
-# conversão para datetime
-df_measurements = convert_dates(
-    df_measurements,
-    ["collectedDate"]
-)
+# Só trata se houver dados
+if not df_measurements.empty and "collectedDate" in df_measurements.columns:
 
-# remoção de timezone
-df_measurements = remove_timezone(
-    df_measurements,
-    ["collectedDate"]
-)
+    # conversão para datetime
+    df_measurements = convert_dates(
+        df_measurements,
+        ["collectedDate"]
+    )
 
-# ordenação crescente
-df_measurements = df_measurements.sort_values(by="collectedDate")
+    # remoção de timezone
+    df_measurements = remove_timezone(
+        df_measurements,
+        ["collectedDate"]
+    )
+
+    # ordenação crescente
+    df_measurements = df_measurements.sort_values(by="collectedDate")
+
+else:
+    print("Sem medições para tratamento.")
 
 """##**6.5. Carga no Sheets**"""
 
@@ -1176,28 +1182,58 @@ if __name__ == "__main__":
 
 """##**8.4. DataFrame**"""
 
-# separação de dados aninhados
-df_conditions = df_conditions.join(
-    pd.json_normalize(df_conditions["workOrder"]).add_prefix("workOrder_")
-    ).drop(columns=["workOrder"]
-)
+# Só processa se houver dados
+if not df_conditions.empty:
 
-# conversão para datetime
-df_conditions = convert_dates(
-    df_conditions,
-    ["collectDate",
-    "conditionDate"]
-)
+    # separação de dados aninhados
+    if "workOrder" in df_conditions.columns:
+        df_conditions = df_conditions.join(
+            pd.json_normalize(
+                df_conditions["workOrder"]
+            ).add_prefix("workOrder_")
+        ).drop(columns=["workOrder"])
 
-# remoção de timezone
-df_conditions = remove_timezone(
-    df_conditions,
-    ["collectDate",
-    "conditionDate"]
-)
+    # conversão para datetime
+    df_conditions = convert_dates(
+        df_conditions,
+        [
+            "collectDate",
+            "conditionDate"
+        ]
+    )
 
-# ordenação crescente
-df_conditions = df_conditions.sort_values(by="conditionDate")
+    # remoção de timezone
+    df_conditions = remove_timezone(
+        df_conditions,
+        [
+            "collectDate",
+            "conditionDate"
+        ]
+    )
+
+    # ordenação
+    if "conditionDate" in df_conditions.columns:
+        df_conditions = df_conditions.sort_values(by="conditionDate")
+
+else:
+    print("Sem conditions para tratamento.")
+
+    df_conditions = pd.DataFrame(columns=[
+        "assetId",
+        "collectDate",
+        "conditionDate",
+        "conditionId",
+        "conditionState",
+        "inspectionType",
+        "trend",
+        "technique",
+        "status",
+        "diagnostic",
+        "observation",
+        "author",
+        "origem",
+        "workOrderid"
+    ])
 
 """## **8.5. Carga no Sheets**"""
 
