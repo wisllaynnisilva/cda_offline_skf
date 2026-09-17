@@ -2,7 +2,7 @@ name: cda_offline_skf
 
 on:
   schedule:
-    - cron: '0 5 * * *'  # Todo dia às 02:00 no Brasil (UTC-3)
+    - cron: '0 6 * * *'  # Todo dia às 03:00 no Brasil (UTC-3)
   workflow_dispatch:
 
 jobs:
