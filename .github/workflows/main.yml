@@ -2,25 +2,38 @@ name: cda_offline_skf
 
 on:
   schedule:
-    - cron: '0 6 * * *'  # Todo dia às 03:00 no Brasil (UTC-3)
+    # Minuto "quebrado" de propósito: agendamentos em hora cheia (minuto 0)
+    # são os mais atrasados/descartados pelo GitHub em horários de pico.
+    - cron: '13 6 * * *'  # todo dia ~03:13 no Brasil (UTC-3)
   workflow_dispatch:
+    inputs:
+      data_referencia:
+        description: 'Dia a (re)processar nas cargas incrementais, AAAA-MM-DD (vazio = ontem)'
+        required: false
+        default: ''
+
+# Nunca roda duas execuções ao mesmo tempo (evita escrita concorrente nas planilhas)
+concurrency:
+  group: ${{ github.workflow }}
+  cancel-in-progress: false
 
 jobs:
-  run-notebook:
+  run:
     runs-on: ubuntu-latest
+    timeout-minutes: 150
 
     steps:
       - name: Checkout do repositório
-        uses: actions/checkout@v4
+        uses: actions/checkout@v5
 
       - name: Configurar Python
-        uses: actions/setup-python@v5
+        uses: actions/setup-python@v6
         with:
-          python-version: '3.10'
+          python-version: '3.13'
+          cache: pip
 
       - name: Instalar dependências
-        run: |
-          pip install -r requirements.txt
+        run: pip install -r requirements.txt
 
       - name: Executar script
         env:
@@ -28,5 +41,6 @@ jobs:
           SKF_KEY: ${{ secrets.SKF_KEY }}
           SKF_SHORTNAMES: ${{ secrets.SKF_SHORTNAMES }}
           SKF_URL: ${{ secrets.SKF_URL }}
-        run: |
-          python cda_offline_skf.py
+          DATA_REFERENCIA: ${{ inputs.data_referencia }}
+          PYTHONUNBUFFERED: '1'
+        run: python cda_offline_skf.py
