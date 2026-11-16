@@ -170,11 +170,21 @@ def por_ativo(func, df_assets, tolerancia=0.05):
 # ---------------------------------------------------------------------------
 
 def converter_datas(df, colunas):
-    """Converte para datetime sem timezone (UTC). Nunca quebra se o formato mudar."""
+    """
+    Mesma regra do código original: só converte colunas no formato
+    'Thu, 12 Nov 2026 03:00:00 GMT' (vira 'AAAA-MM-DD HH:MM:SS', UTC sem
+    timezone). Outros formatos ficam como vieram — mas sem quebrar o script
+    (antes, um formato diferente derrubava tudo no .dt.tz_localize).
+    """
     for col in colunas:
-        if col in df.columns and not pd.api.types.is_datetime64_any_dtype(df[col]):
+        if col not in df.columns:
+            continue
+        if not pd.api.types.is_datetime64_any_dtype(df[col]):
+            amostra = df[col].dropna().astype(str).head(5)
+            if not any("," in x and "GMT" in x for x in amostra):
+                continue
             df[col] = pd.to_datetime(df[col], utc=True, errors="coerce", format="mixed")
-        if col in df.columns and getattr(df[col].dt, "tz", None) is not None:
+        if getattr(df[col].dt, "tz", None) is not None:
             df[col] = df[col].dt.tz_convert(None)
     return df
 
@@ -244,7 +254,9 @@ def etapa_measurements(df_assets):
     if df.empty:
         log.warning("Sem medições no período")
         return df
-    df = converter_datas(df, ["collectedDate"]).sort_values("collectedDate")
+    df = converter_datas(df, ["collectedDate"])
+    if pd.api.types.is_datetime64_any_dtype(df["collectedDate"]):
+        df = df.sort_values("collectedDate")
     # A chave agora inclui collectedDate: antes, duas leituras do mesmo ponto
     # com o mesmo valor em dias diferentes eram descartadas como "duplicata".
     anexar_novos(
@@ -291,8 +303,10 @@ def etapa_conditions(df_assets):
     if df.empty:
         log.warning("Sem conditions no período")
         return df
-    df = extrair_dict(df, "workOrder", "workOrder_")     # -> workOrder_id (nome mantido)
-    df = converter_datas(df, ["collectDate", "conditionDate"]).sort_values("conditionDate")
+    df = extrair_dict(df, "workOrder", "workOrder")      # -> workOrderid (nome do cabeçalho atual)
+    df = converter_datas(df, ["collectDate", "conditionDate"])
+    if pd.api.types.is_datetime64_any_dtype(df["conditionDate"]):
+        df = df.sort_values("conditionDate")
     anexar_novos(
         PLANILHAS["conditions"], df,
         chaves=["assetId", "conditionId", "conditionDate", "origem"],
@@ -313,7 +327,8 @@ def etapa_workorders():
         return df
     df = extrair_dict(df, "intervention", "intervention_")
     df = converter_datas(df, ["scheduledDate", "openingDate", "intervention_date"])
-    df = df.sort_values("openingDate")
+    if pd.api.types.is_datetime64_any_dtype(df["openingDate"]):
+        df = df.sort_values("openingDate")
     gravar_aba(PLANILHAS["workorders"], df, "workorders")
     return df
 

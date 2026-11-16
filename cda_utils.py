@@ -98,14 +98,16 @@ class HTTPRetentavel(Exception):
     pass
 
 
-def _espera_retry_after(resp, padrao):
+def _retry_after(resp):
     valor = resp.headers.get("Retry-After") if resp is not None else None
-    if valor:
-        try:
-            return min(float(valor), 900)
-        except ValueError:
-            pass
-    return padrao
+    try:
+        return float(valor) if valor else None
+    except ValueError:
+        return None
+
+
+class CotaEsgotada(RuntimeError):
+    """A API pediu para esperar mais do que vale a pena (limite diário/cota)."""
 
 
 def http(
@@ -115,6 +117,7 @@ def http(
     tentativas=6,
     backoff=2.0,
     espera_max=120,
+    retry_after_max=300,
     ao_401=None,
     **kwargs,
 ):
@@ -123,6 +126,9 @@ def http(
 
     - 429/5xx/erros de rede: tenta de novo com backoff exponencial
       (respeitando o header Retry-After quando existir).
+    - Se a API pedir para esperar mais que `retry_after_max` segundos (sinal
+      de cota/limite diário esgotado), desiste na hora: repetir só gastaria
+      mais requisições da cota.
     - 401: se `ao_401` for informado, chama-o (para renovar token) e tenta
       de novo uma vez. A função deve devolver os novos headers.
     - Demais 4xx: levanta HTTPError imediatamente (não adianta repetir).
@@ -153,7 +159,14 @@ def http(
             if tentativa == tentativas:
                 break
             espera = min(backoff ** tentativa, espera_max)
-            espera = _espera_retry_after(resp, espera)
+            pedido = _retry_after(resp)
+            if pedido is not None:
+                if pedido > retry_after_max:
+                    raise CotaEsgotada(
+                        f"{_url_curta(url)}: API pediu espera de {pedido:.0f}s "
+                        "(provável limite de requisições esgotado) — não vou insistir"
+                    ) from exc
+                espera = pedido
             log.warning(
                 "%s em %s (tentativa %d/%d) — aguardando %.0fs",
                 exc, _url_curta(url), tentativa, tentativas, espera,
@@ -339,8 +352,8 @@ def anexar_novos(
 
     * Compara as chaves normalizadas (datas -> 'AAAA-MM-DD HH:MM:SS',
       123.0 -> '123', etc.), evitando duplicatas por diferença de tipo.
-    * Alinha as colunas pelo cabeçalho que já está na planilha (e adiciona
-      colunas novas ao final do cabeçalho, se houver).
+    * Alinha as colunas pelo cabeçalho que já está na planilha. A estrutura
+      da planilha nunca é alterada (colunas novas não são criadas).
     * Usa append (a própria API encontra a última linha).
     * value_input_option="RAW" grava tudo como texto (sem o Sheets
       converter datas/números).
@@ -368,21 +381,28 @@ def anexar_novos(
     header = [str(c).strip() for c in valores[0]]
     header += [""] * (largura - len(header))
 
-    # Colunas do DataFrame que ainda não estão no cabeçalho: ocupam primeiro
-    # as colunas sem título (dados antigos gravados sem cabeçalho) e depois
-    # vão para o fim. Isso é resolvido ANTES de comparar as chaves, para que
-    # uma coluna antiga sem título (ex.: 'origem') também conte na chave.
+    # A ESTRUTURA DA PLANILHA NUNCA É ALTERADA (o cabeçalho não é reescrito).
+    # Colunas do DataFrame que não estão no cabeçalho:
+    #  * ocupam, só internamente, as colunas sem título no fim (dados antigos
+    #    gravados sem cabeçalho, ex.: 'origem' no trends do online_skf), para
+    #    os dados continuarem caindo na mesma posição de sempre;
+    #  * as que sobrarem são descartadas com aviso no log.
     extras = [c for c in df.columns if c != "_k" and c not in header]
-    header_mudou = False
     if extras:
         vagas = [i for i, h in enumerate(header) if not h]
-        for col in extras:
+        mapeadas = []
+        for col in list(extras):
             if vagas:
                 header[vagas.pop(0)] = col
-            else:
-                header.append(col)
-        header_mudou = True
-        log.warning("[%s] cabeçalho recebe colunas: %s", nome, extras)
+                mapeadas.append(col)
+                extras.remove(col)
+        if mapeadas:
+            log.info("[%s] colunas sem título usadas para: %s", nome, mapeadas)
+        if extras:
+            log.warning(
+                "[%s] colunas fora do cabeçalho da planilha (NÃO gravadas, "
+                "estrutura mantida): %s", nome, extras,
+            )
 
     nomes = [h if h else f"__sem_nome_{i}" for i, h in enumerate(header)]
     corpo = [list(linha) + [""] * (len(nomes) - len(linha)) for linha in valores[1:]]
@@ -395,10 +415,9 @@ def anexar_novos(
         log.info("[%s] nenhuma linha nova", nome)
         return 0
 
-    if header_mudou:
-        if aba.col_count < len(header):
-            sheets_retry(aba.add_cols, len(header) - aba.col_count)
-        sheets_retry(aba.update, [header], "A1", value_input_option="RAW")
+    # descarta colunas vazias sem título no fim (não precisam ser gravadas)
+    while header and not header[-1]:
+        header.pop()
 
     _checar_limite(len(corpo) + len(novos), len(header), nome)
 
