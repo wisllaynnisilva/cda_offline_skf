@@ -5,11 +5,11 @@ on:
   workflow_dispatch:
     inputs:
       modo:
-        description: 'auditar = só leitura | testar_copia = copia e apaga uma planilha pequena | corrigir = backup + correção (informe as tabelas)'
+        description: 'auditar = só leitura | testar_copia = copia e apaga uma planilha pequena | corrigir = backup + correção (informe as tabelas) | aparar = remove só linhas/colunas vazias da grade'
         required: true
         default: 'auditar'
         type: choice
-        options: [auditar, testar_copia, corrigir]
+        options: [auditar, testar_copia, corrigir, aparar]
       tabelas:
         description: 'Tabelas separadas por vírgula (vazio = todas)'
         required: false

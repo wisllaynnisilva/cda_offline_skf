@@ -281,6 +281,25 @@ def corrigir(nome, cfg):
     return r
 
 
+def aparar(nome, cfg):
+    """Remove só linhas/colunas VAZIAS da grade (aba principal e abas backup_*)."""
+    planilha = sheets_retry(gc().open_by_key, cfg["id"])
+    r = {"tabela": nome, "abas": {}}
+    for aba in sheets_retry(planilha.worksheets):
+        if aba.title != cfg.get("aba", "Sheet1") and not aba.title.startswith("backup_"):
+            continue
+        valores = ler_tudo(aba)
+        linhas = max(len(valores), 2)
+        colunas = max([len(l) for l in valores] + [1])
+        antes = aba.row_count * aba.col_count
+        if aba.row_count > linhas or aba.col_count > colunas:
+            sheets_retry(aba.resize, rows=min(aba.row_count, linhas), cols=min(aba.col_count, colunas))
+        r["abas"][aba.title] = f"{antes} -> {min(aba.row_count, linhas) * min(aba.col_count, colunas)} células"
+    abas = sheets_retry(planilha.worksheets)
+    r["grade_arquivo_depois"] = sum(a.row_count * a.col_count for a in abas)
+    return r
+
+
 def main():
     modo = (os.getenv("MODO") or "auditar").strip()
     with open(os.path.join(AQUI, "manutencao_tabelas.json"), encoding="utf-8") as f:
@@ -289,6 +308,15 @@ def main():
 
     if modo == "testar_copia":
         testar_copia(tabelas)
+        return
+    if modo == "aparar":
+        for nome in (so or list(tabelas)):
+            try:
+                r = aparar(nome, tabelas[nome])
+            except Exception as exc:  # noqa: BLE001
+                log.exception("[%s] falhou: %s", nome, exc)
+                r = {"tabela": nome, "erro": f"{type(exc).__name__}: {exc}"}
+            print("APARAR " + json.dumps(r, ensure_ascii=False, default=str), flush=True)
         return
     if modo == "corrigir":
         if not so:
