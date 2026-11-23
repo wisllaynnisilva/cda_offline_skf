@@ -39,7 +39,7 @@ PLANILHAS = {
 
 # Tabelas históricas: ao passar deste nº de linhas, o arquivo é arquivado como
 # '<nome> revNNN' e a planilha ativa recomeça vazia (mesmo ID/link).
-LIMITE_LINHAS = {"measurements": 400_000, "conditions": 300_000}
+LIMITE_LINHAS = {"measurements": 600_000, "conditions": 300_000}
 
 FIELDS_ASSETS = """
 assetId assetName assetDescription functionalLocation parentId parentName
