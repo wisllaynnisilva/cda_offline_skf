@@ -1,0 +1,95 @@
+{
+  "assets": {
+    "id": "1W5S8o-sgZch0HpJC052O_TAkFzaz_BVrRC82j4ClsKQ",
+    "chaves": [
+      "origem",
+      "assetId"
+    ],
+    "dominios": {
+      "origem": [
+        "ubu",
+        "germano"
+      ]
+    }
+  },
+  "overall": {
+    "id": "1FxNznh_ouoDljB0Zw9pjH3GEEe0J520_AD4lNMzOM04",
+    "dominios": {
+      "origem": [
+        "ubu",
+        "germano"
+      ]
+    }
+  },
+  "lastmeasurement": {
+    "id": "15TXlKwMk7Q4glMeKVhi5h69sf0dUZnQDFNC68rhqX3Q",
+    "dominios": {
+      "origem": [
+        "ubu",
+        "germano"
+      ]
+    }
+  },
+  "measurements": {
+    "id": "1UK6AatDxCdqg8NZxgL8ZThyCSNXOh03_AY4jtGaumXc",
+    "chaves": [
+      "assetId",
+      "pointId",
+      "channel",
+      "collectedDate",
+      "overallValue",
+      "origem"
+    ],
+    "colunas_data": [
+      "collectedDate"
+    ],
+    "coluna_tempo_esperada": "collectedDate",
+    "dominios": {
+      "origem": [
+        "ubu",
+        "germano"
+      ]
+    }
+  },
+  "lastcondition": {
+    "id": "1vxJhkW0Zh0kdxU0tUKnT1nUCRLmI4FeJLcjsQylJk9E",
+    "dominios": {
+      "origem": [
+        "ubu",
+        "germano"
+      ]
+    }
+  },
+  "conditions": {
+    "id": "1-Hkx_2B5HauY71j0RDYXKS_09Ax34J0Dp6wUGRG32q4",
+    "chaves": [
+      "assetId",
+      "conditionId",
+      "conditionDate",
+      "origem"
+    ],
+    "colunas_data": [
+      "conditionDate"
+    ],
+    "coluna_tempo_esperada": "conditionDate",
+    "dominios": {
+      "origem": [
+        "ubu",
+        "germano"
+      ]
+    }
+  },
+  "workorders": {
+    "id": "1dM1sHzskTNjd9Wc8wIQTG7dGWgyekVAZM-_wFYQp4tc",
+    "chaves": [
+      "id",
+      "origem"
+    ],
+    "dominios": {
+      "origem": [
+        "ubu",
+        "germano"
+      ]
+    }
+  }
+}

@@ -1,0 +1,39 @@
+name: manutencao_planilhas
+
+# Só roda manualmente (Actions -> manutencao_planilhas -> Run workflow).
+on:
+  workflow_dispatch:
+    inputs:
+      modo:
+        description: 'auditar = só leitura'
+        required: true
+        default: 'auditar'
+        type: choice
+        options: [auditar]
+      tabelas:
+        description: 'Tabelas separadas por vírgula (vazio = todas)'
+        required: false
+        default: ''
+
+concurrency:
+  group: cda_offline_skf   # mesmo grupo do job diário: nunca rodam ao mesmo tempo
+  cancel-in-progress: false
+
+jobs:
+  manutencao:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-python@v6
+        with:
+          python-version: '3.13'
+          cache: pip
+      - run: pip install -r requirements.txt
+      - name: Manutenção
+        env:
+          GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
+          MODO: ${{ inputs.modo }}
+          TABELAS: ${{ inputs.tabelas }}
+          PYTHONUNBUFFERED: '1'
+        run: python manutencao.py
