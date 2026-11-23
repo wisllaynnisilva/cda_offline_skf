@@ -1,1505 +1,353 @@
 # -*- coding: utf-8 -*-
-"""cda_offline_skf.ipynb
+"""
+cda_offline_skf — coleta da plataforma SKF offline (API GraphQL por
+shortname: UBU e GERMANO) e carga no Google Sheets.
 
-# **1. BIBLIOTECAS**
+Etapas (isoladas; a falha de uma não derruba as independentes):
+  assets, overall-alarm, lastmeasurement, measurements (D-1, incremental),
+  lastcondition, conditions (D-1, incremental), workorders.
 """
 
-import os
-import time
-import json
-import logging
-import requests
+from concurrent.futures import ThreadPoolExecutor
+
 import pandas as pd
-from datetime import datetime, timedelta, timezone
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
-import gspread
-from google.oauth2.service_account import Credentials
-from gspread_dataframe import get_as_dataframe, set_with_dataframe
+from cda_utils import (
+    Pipeline, anexar_novos, dia_referencia, env_json, env_obrigatoria,
+    gravar_aba, http, log,
+)
 
-"""# **2. DADOS DE ACESSO**
+# ---------------------------------------------------------------------------
+# 1. CONFIGURAÇÃO
+# ---------------------------------------------------------------------------
 
-##**2.1. API Key**
-"""
+API_KEY = env_obrigatoria("SKF_KEY")
+SHORTNAMES = env_json("SKF_SHORTNAMES")   # {"ubu": "...", "germano": "..."}
+BASE_URL = env_obrigatoria("SKF_URL").rstrip("/")
+HEADERS = {"x-api-key": API_KEY, "Content-Type": "application/json"}
+WORKERS = 8
 
-API_KEY = os.getenv("SKF_KEY")
-
-"""##**2.2. Shortname**"""
-
-SHORTNAMES = json.loads(os.environ["SKF_SHORTNAMES"])
-
-"""##**2.3. URL's**"""
-
-BASE_URL = os.getenv("SKF_URL")
-
-"""##**2.4. Header**"""
-
-HEADERS = {
-    "x-api-key": API_KEY,
-    "Content-Type": "application/json"
+PLANILHAS = {
+    "assets": "1W5S8o-sgZch0HpJC052O_TAkFzaz_BVrRC82j4ClsKQ",
+    "overall": "1FxNznh_ouoDljB0Zw9pjH3GEEe0J520_AD4lNMzOM04",
+    "lastmeasurement": "15TXlKwMk7Q4glMeKVhi5h69sf0dUZnQDFNC68rhqX3Q",
+    "measurements": "1UK6AatDxCdqg8NZxgL8ZThyCSNXOh03_AY4jtGaumXc",
+    "lastcondition": "1vxJhkW0Zh0kdxU0tUKnT1nUCRLmI4FeJLcjsQylJk9E",
+    "conditions": "1-Hkx_2B5HauY71j0RDYXKS_09Ax34J0Dp6wUGRG32q4",
+    "workorders": "1dM1sHzskTNjd9Wc8wIQTG7dGWgyekVAZM-_wFYQp4tc",
 }
 
-"""##**2.5. Fields**
-
-###**2.5.1. Assets**
-"""
-
 FIELDS_ASSETS = """
-assetId
-assetName
-assetDescription
-functionalLocation
-parentId
-parentName
-criticality
-assetStatus
-assetSegment
-conditionIndex
-equipmentType
+assetId assetName assetDescription functionalLocation parentId parentName
+criticality assetStatus assetSegment conditionIndex equipmentType
 """
-
-"""###**2.5.2. Overall alarms**"""
 
 FIELDS_ALARMS = """
-assetId
-assetName
-pointId
-pointName
-unit
-alarmMethod
-publicOrPrivateAlarm
-alertHigh
-alertLow
-dangerHigh
-dangerLow
+assetId assetName pointId pointName unit alarmMethod publicOrPrivateAlarm
+alertHigh alertLow dangerHigh dangerLow
 """
 
-"""###**2.5.3. Measurements**"""
-
 FIELDS_MEASUREMENTS = """
-assetId
-assetName
-pointId
-pointName
-channel
-unit
-pointStatus
-collectedDate
+assetId assetName pointId pointName channel unit pointStatus collectedDate
 overallValue
 """
 
-"""###**2.5.4. Conditions**"""
-
 FIELDS_CONDITIONS = """
-assetId
-collectDate
-conditionDate
-conditionId
-conditionState
-inspectionType
-trend
-technique
-status
-diagnostic
-observation
-author
-workOrder {
-    id
-}
+assetId collectDate conditionDate conditionId conditionState inspectionType
+trend technique status diagnostic observation author workOrder { id }
 """
-
-"""**Campos existentes não utilizados da api**
-
-globalValue
-
-globalValueUnity
-
-workOrder {
-   orderNumber
-   deadline
-   priority
-   technique
-   scheduledDate
-   openingDate
-   reWork
-   cmmsRegister
-   cmms
-   services
-   situation
-   author
-}
-
-intervention {
-   date
-   interventionType
-   description
-   isDiagnosticCorrect
-}
-
-###**2.5.5. Workorders**
-"""
+# Campos existentes não utilizados: globalValue, globalValueUnity,
+# workOrder {orderNumber deadline priority technique scheduledDate ...},
+# intervention {date interventionType description isDiagnosticCorrect}
 
 FIELDS_WORKORDERS = """
-assetId
-id
-deadline
-priority
-technique
-scheduledDate
-openingDate
-reWork
-cmmsRegister
-cmms
-services
-situation
-intervention {
-    date
-    interventionType
-    description
-    isDiagnosticCorrect
-}
+assetId id deadline priority technique scheduledDate openingDate reWork
+cmmsRegister cmms services situation
+intervention { date interventionType description isDiagnosticCorrect }
 """
+# Campos existentes não utilizados: orderNumber, author
 
-"""**Campos existentes não utilizados da api**
+# ---------------------------------------------------------------------------
+# 2. CLIENTE DA API
+# ---------------------------------------------------------------------------
 
-orderNumber
+def consultar(caminho, filtro, campos):
+    """POST de uma expressão GraphQL; devolve o JSON da resposta."""
+    expression = f"{{ filter{filtro} {{ {campos} }} }}"
+    resp = http("POST", f"{BASE_URL}/{caminho}", headers=HEADERS, json={"expression": expression})
+    return resp.json()
 
-author
 
-##**2.6. Funções**
+def _args(**kwargs):
+    """Monta '(a: 1, b: "x")' ignorando valores None."""
+    partes = []
+    for k, v in kwargs.items():
+        if v is None:
+            continue
+        partes.append(f'{k}: "{v}"' if isinstance(v, str) and k != "cursor" else f"{k}: {v}")
+    return f"({', '.join(partes)})" if partes else ""
 
-###**2.6.1. Logger (tempo real)**
-"""
 
-logging.basicConfig(
-    level=logging.INFO,
-    format="%(asctime)s | %(levelname)s | %(message)s"
-)
-
-logger = logging.getLogger(__name__)
-
-"""###**2.6.2. Log estruturado (memória)**"""
-
-LOGS = []
-
-def add_log(status, endpoint, origem, asset_id=None, tentativa=None, tempo=None, mensagem=None):
-    LOGS.append({
-        "timestamp": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-        "endpoint": endpoint,
-        "status": status,
-        "origem": origem,
-        "assetId": asset_id,
-        "tentativa": tentativa,
-        "tempo": tempo,
-        "mensagem": mensagem
-    })
-
-"""###**2.6.3. Retry com Log**"""
-
-def request_with_retry(url, payload, origem, endpoint, asset_id=None, retries=5, backoff=2):
-
-    for attempt in range(retries):
-        start_time = time.time()
-
+def paginar(caminho, campos, origem, tentativas_completas=2, **filtros):
+    """
+    Busca todas as páginas (cursor). Se uma página intermediária falhar
+    (já aconteceu no overall-alarm), recomeça a paginação do zero uma vez.
+    """
+    for tentativa in range(1, tentativas_completas + 1):
+        dados, cursor = [], None
         try:
-            response = requests.post(
-                url,
-                headers=HEADERS,
-                json=payload,
-                timeout=30
-            )
+            while True:
+                # nas páginas seguintes o original enviava só o cursor no lugar
+                # do rowsPerPage (os demais filtros continuam)
+                filtros_pagina = {
+                    k: v for k, v in filtros.items() if not (cursor and k == "rowsPerPage")
+                }
+                result = consultar(caminho, _args(**filtros_pagina, cursor=cursor), campos)
+                dados.extend(result.get("data") or [])
+                cursor = result.get("nextCursor")
+                if not cursor:
+                    break
+            break
+        except Exception as exc:  # noqa: BLE001
+            if tentativa == tentativas_completas:
+                raise
+            log.warning("[%s/%s] paginação falhou (%s) — recomeçando", caminho, origem, exc)
+    for item in dados:
+        item["origem"] = origem
+    return dados
 
-            elapsed = round(time.time() - start_time, 2)
 
-            if response.status_code == 200:
-                logger.info(f"[{endpoint}] SUCCESS | origem={origem} asset={asset_id} tempo={elapsed}s")
-                add_log("SUCCESS", endpoint, origem, asset_id, attempt+1, elapsed)
-                return response
-
-            elif response.status_code in [429, 500, 502, 503, 504]:
-                wait = backoff ** attempt
-
-                logger.warning(f"[{endpoint}] RETRY {response.status_code} | origem={origem} tentativa={attempt+1}")
-                add_log("RETRY", endpoint, origem, asset_id, attempt+1, elapsed, f"HTTP {response.status_code}")
-
-                time.sleep(wait)
-
-            else:
-                logger.error(f"[{endpoint}] ERROR | origem={origem} asset={asset_id} erro={response.text}")
-                add_log("ERROR", endpoint, origem, asset_id, attempt+1, mensagem=response.text)
-                raise Exception(response.text)
-
-        except Exception as e:
-            wait = backoff ** attempt
-
-            logger.warning(f"[{endpoint}] RETRY_NETWORK | origem={origem} tentativa={attempt+1}")
-            add_log("RETRY_NETWORK", endpoint, origem, asset_id, attempt+1, mensagem=str(e))
-
-            time.sleep(wait)
-
-    logger.critical(f"[{endpoint}] FAIL | origem={origem} asset={asset_id}")
-    add_log("FAIL", endpoint, origem, asset_id, mensagem="Falha após retries")
-
-    raise Exception(f"[{origem}] Falhou após {retries} tentativas")
-
-"""###**2.6.2. Conversão para datetime**"""
-
-def convert_dates(df, columns):
-    for col in columns:
-        if col in df.columns:
-            if df[col].dtype == "object":
-                sample = df[col].dropna().astype(str).head(5)
-
-                if any("," in x and "GMT" in x for x in sample):
-                    df[col] = pd.to_datetime(df[col], utc=True, errors="coerce")
+def por_origem(func):
+    """Executa func(origem, shortname) para cada origem. Erro em qualquer uma aborta a etapa."""
+    with ThreadPoolExecutor(max_workers=len(SHORTNAMES)) as pool:
+        partes = list(pool.map(lambda kv: func(kv[0], kv[1]), SHORTNAMES.items()))
+    dados = [item for parte in partes for item in parte]
+    df = pd.DataFrame(dados)
+    if not df.empty:
+        log.info("Registros por origem: %s | total=%d", df.groupby("origem").size().to_dict(), len(df))
     return df
 
-"""###**2.6.3. Remoção de timezone**"""
 
-def remove_timezone(df, columns):
-    for col in columns:
-        if col in df.columns:
-            df[col] = df[col].dt.tz_localize(None)
+def por_ativo(func, df_assets, tolerancia=0.05):
+    """
+    Executa func(shortname, origem, asset_id) para cada ativo ativo, em paralelo.
+    Falhas isoladas são toleradas até `tolerancia`; acima disso a etapa aborta
+    (para não gravar dados incompletos).
+    """
+    ativos = df_assets[
+        df_assets["assetStatus"].notna() & (df_assets["assetStatus"].astype(str) != "None")
+    ]
+    tarefas = [
+        (SHORTNAMES[o], o, int(a))
+        for o, a in zip(ativos["origem"], pd.to_numeric(ativos["assetId"], errors="coerce"))
+        if pd.notna(a) and o in SHORTNAMES
+    ]
+    falhas = []
+
+    def seguro(t):
+        try:
+            return func(*t)
+        except Exception as exc:  # noqa: BLE001
+            falhas.append(t)
+            log.error("Falha asset=%s origem=%s: %s", t[2], t[1], exc)
+            return []
+
+    with ThreadPoolExecutor(max_workers=WORKERS) as pool:
+        partes = list(pool.map(seguro, tarefas))
+
+    if tarefas and len(falhas) / len(tarefas) > tolerancia:
+        raise RuntimeError(f"{len(falhas)}/{len(tarefas)} ativos falharam — etapa abortada")
+    if falhas:
+        log.warning("%d/%d ativos falharam (dentro da tolerância)", len(falhas), len(tarefas))
+
+    df = pd.DataFrame([item for parte in partes for item in parte])
+    log.info("Total de registros: %d (%d ativos consultados)", len(df), len(tarefas))
     return df
 
-"""##**2.7. Sheets**
 
-###**2.7.1. Autenticação no Sheets**
-"""
+# ---------------------------------------------------------------------------
+# 3. TRATAMENTO
+# ---------------------------------------------------------------------------
 
-# Lê a variável de ambiente com o conteúdo do JSON da conta de serviço
-service_account_info = json.loads(os.environ["GOOGLE_SERVICE_ACCOUNT"])
-
-# Define os escopos de acesso (Google Sheets)
-SCOPES = [
-    'https://www.googleapis.com/auth/spreadsheets',
-    'https://www.googleapis.com/auth/drive'
-]
-
-# Cria as credenciais usando o conteúdo do secret
-creds = Credentials.from_service_account_info(service_account_info, scopes=SCOPES)
-
-# Autentica no Google Sheets
-gc = gspread.authorize(creds)
-
-"""# **3. REQUISIÇÃO: ASSETS**
-
-##**3.1. Busca com paginação**
-"""
-
-def fetch_assets(shortname, origem):
-
-    url = f"{BASE_URL}/{shortname}/assets"
-    all_data = []
-    cursor = None
-    ENDPOINT = "assets"
-
-    while True:
-
-        expression = f"""
-        {{
-            filter{f"(cursor: {cursor})" if cursor else "(rowsPerPage: 300)"} {{
-                {FIELDS_ASSETS}
-            }}
-        }}
-        """
-
-        payload = {"expression": expression}
-
-        response = request_with_retry(url, payload, origem, ENDPOINT)
-
-        result = response.json()
-
-        data = result.get("data", [])
-        next_cursor = result.get("nextCursor")
-
-        if not data:
-            logger.warning(f"[{ENDPOINT}] EMPTY | origem={origem}")
-            add_log("EMPTY", ENDPOINT, origem)
-
-        for item in data:
-            item["origem"] = origem
-
-        all_data.extend(data)
-
-        if not next_cursor:
-            break
-
-        cursor = next_cursor
-
-    logger.info(f"[{ENDPOINT}] FINAL | origem={origem} total={len(all_data)}")
-
-    return all_data
-
-"""##**3.2. Execução paralela**"""
-
-def fetch_all_assets_parallel():
-    results = []
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = {
-            executor.submit(fetch_assets, short, name): name
-            for name, short in SHORTNAMES.items()
-        }
-
-        for future in as_completed(futures):
-            try:
-                data = future.result()
-                results.extend(data)
-            except Exception as e:
-                print(f"Erro em {futures[future]}: {e}")
-
-    return results
-
-"""##**3.3. Main**"""
-
-if __name__ == "__main__":
-    ativos = fetch_all_assets_parallel()
-
-    df_assets = pd.DataFrame(ativos)
-
-    print("\nResumo:")
-    print(df_assets.groupby("origem").size())
-
-    print("\nTotal geral:", len(df_assets))
-
-"""##**3.5. Carga no Sheets**"""
-
-# Nome da planilha
-planilha_id = "1W5S8o-sgZch0HpJC052O_TAkFzaz_BVrRC82j4ClsKQ"
-nome_da_aba = "Sheet1"
-
-# Abre a planilha
-planilha = gc.open_by_key(planilha_id)
-aba = planilha.worksheet(nome_da_aba)
-
-# Limpa a aba antes de escrever os dados (opcional)
-aba.clear()
-
-# Envia o DataFrame para a aba
-set_with_dataframe(aba, df_assets)
-
-print("Dados enviados com sucesso para o Google Sheets!")
-
-"""#**4. REQUISIÇÃO: OVERALL ALARMS**
-
-##**4.1. Busca com paginação**
-"""
-
-def fetch_overall_alarm(shortname, origem):
-
-    url = f"{BASE_URL}/{shortname}/overall-alarm"
-    all_data = []
-    cursor = None
-    ENDPOINT = "overall-alarm"
-
-    while True:
-        if cursor:
-            expression = f"""
-            {{
-                filter(cursor: {cursor}) {{
-                    {FIELDS_ALARMS}
-                }}
-            }}
-            """
-        else:
-            expression = f"""
-            {{
-                filter {{
-                    {FIELDS_ALARMS}
-                }}
-            }}
-            """
-
-        payload = {"expression": expression}
-
-        response = request_with_retry(
-            url,
-            payload,
-            origem,
-            endpoint=ENDPOINT
-        )
-
-        result = response.json()
-
-        data = result.get("data", [])
-        next_cursor = result.get("nextCursor")
-
-        if not data:
-            logger.warning(f"[{ENDPOINT}] EMPTY | origem={origem}")
-
-            add_log(
-                "EMPTY",
-                ENDPOINT,
-                origem,
-                mensagem="Sem dados retornados"
-            )
-
-        for item in data:
-            item["origem"] = origem
-
-        all_data.extend(data)
-
-        if not next_cursor:
-            break
-
-        cursor = next_cursor
-
-    logger.info(f"[{ENDPOINT}] FINAL | origem={origem} total={len(all_data)}")
-
-    add_log(
-        "FINAL",
-        ENDPOINT,
-        origem,
-        mensagem=f"Total registros: {len(all_data)}"
-    )
-
-    return all_data
-
-"""##**4.2. Execução paralela**"""
-
-def fetch_all_overall_alarm():
-    results = []
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = {
-            executor.submit(fetch_overall_alarm, short, name): name
-            for name, short in SHORTNAMES.items()
-        }
-
-        for future in as_completed(futures):
-            origem = futures[future]
-
-            try:
-                data = future.result()
-                results.extend(data)
-            except Exception as e:
-                print(f"Erro em {origem}: {e}")
-
-    return results
-
-"""##**4.3. Main**"""
-
-if __name__ == "__main__":
-    dados = fetch_all_overall_alarm()
-
-    if not dados:
-        print("Nenhum dado retornado da API")
-    else:
-        df_overall = pd.DataFrame(dados)
-
-        print("\nResumo:")
-        print(df_overall.groupby("origem").size())
-
-        print("\nTotal geral:", len(df_overall))
-
-"""##**4.5. Carga no Sheets**"""
-
-# Nome da planilha
-planilha_id = "1FxNznh_ouoDljB0Zw9pjH3GEEe0J520_AD4lNMzOM04"
-nome_da_aba = "Sheet1"
-
-# Abre a planilha
-planilha = gc.open_by_key(planilha_id)
-aba = planilha.worksheet(nome_da_aba)
-
-# Limpa a aba antes de escrever os dados (opcional)
-aba.clear()
-
-# Envia o DataFrame para a aba
-set_with_dataframe(aba, df_overall)
-
-print("Dados enviados com sucesso para o Google Sheets!")
-
-"""#**5. REQUISIÇÃO: LAST MEASUREMENT**
-
-##**5.1. Busca com paginação**
-"""
-
-def fetch_last_measurement_by_asset(shortname, origem, asset_id):
-
-    if pd.isna(asset_id):
-        return []
-
-    try:
-        asset_id = int(asset_id)
-    except:
-        return []
-
-    url = f"{BASE_URL}/{shortname}/lastmeasurement"
-    ENDPOINT = "lastmeasurement"
-
-    expression = f"""
-    {{
-        filter(assetId: {asset_id}) {{
-            {FIELDS_MEASUREMENTS}
-        }}
-    }}
+def converter_datas(df, colunas):
     """
+    Mesma regra do código original: só converte colunas no formato
+    'Thu, 12 Nov 2026 03:00:00 GMT' (vira 'AAAA-MM-DD HH:MM:SS', UTC sem
+    timezone). Outros formatos ficam como vieram — mas sem quebrar o script
+    (antes, um formato diferente derrubava tudo no .dt.tz_localize).
+    """
+    for col in colunas:
+        if col not in df.columns:
+            continue
+        if not pd.api.types.is_datetime64_any_dtype(df[col]):
+            amostra = df[col].dropna().astype(str).head(5)
+            if not any("," in x and "GMT" in x for x in amostra):
+                continue
+            df[col] = pd.to_datetime(df[col], utc=True, errors="coerce", format="mixed")
+        if getattr(df[col].dt, "tz", None) is not None:
+            df[col] = df[col].dt.tz_convert(None)
+    return df
 
-    payload = {"expression": expression}
 
-    response = request_with_retry(
-        url,
-        payload,
-        origem,
-        endpoint=ENDPOINT,
-        asset_id=asset_id
-    )
+def extrair_dict(df, coluna, prefixo):
+    """Expande uma coluna de dicts (pode ter None) em colunas com prefixo."""
+    if coluna not in df.columns:
+        return df
+    dicts = df[coluna].map(lambda x: x if isinstance(x, dict) else {}).tolist()
+    expandido = pd.json_normalize(dicts).add_prefix(prefixo)
+    expandido.index = df.index
+    return df.drop(columns=[coluna]).join(expandido)
 
-    result = response.json()
-    data = result.get("data", [])
 
-    if not data:
-        logger.warning(f"[{ENDPOINT}] EMPTY | origem={origem} asset={asset_id}")
-        add_log("EMPTY", ENDPOINT, origem, asset_id)
-        return []
+# ---------------------------------------------------------------------------
+# 4. ETAPAS
+# ---------------------------------------------------------------------------
 
-    for item in data:
+def etapa_assets():
+    df = por_origem(lambda o, s: paginar(f"{s}/assets", FIELDS_ASSETS, o, rowsPerPage=300))
+    if df.empty:
+        raise RuntimeError("Nenhum asset retornado")
+    gravar_aba(PLANILHAS["assets"], df, "assets")
+    return df
+
+
+def etapa_overall():
+    df = por_origem(lambda o, s: paginar(f"{s}/overall-alarm", FIELDS_ALARMS, o))
+    gravar_aba(PLANILHAS["overall"], df, "overall-alarm")
+    return df
+
+
+def _last_measurement(shortname, origem, asset_id):
+    dados = consultar(f"{shortname}/lastmeasurement", _args(assetId=asset_id), FIELDS_MEASUREMENTS).get("data") or []
+    for item in dados:
         item["origem"] = origem
         item["assetId"] = asset_id
+    return dados
 
-    return data
 
-"""##**5.2. Execução paralela**"""
+def etapa_lastmeasurement(df_assets):
+    df = por_ativo(_last_measurement, df_assets)
+    df = converter_datas(df, ["collectedDate"])
+    gravar_aba(PLANILHAS["lastmeasurement"], df, "lastmeasurement")
+    return df
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
-def fetch_all_last_measurements(df_assets):
+def _periodo():
+    dia = dia_referencia()
+    log.info("Período de referência: %s", dia)
+    return dia.strftime("%Y-%m-%d 00:00:00"), dia.strftime("%Y-%m-%d 23:59:59")
 
-    df_assets = df_assets[
-        df_assets["assetStatus"].notna() &
-        (df_assets["assetStatus"] != "None")
-    ]
 
-    results = []
+def etapa_measurements(df_assets):
+    inicio, fim = _periodo()
 
-    with ThreadPoolExecutor(max_workers=10) as executor:
-        futures = [
-            executor.submit(
-                fetch_last_measurement_by_asset,
-                row["shortname"],
-                row["origem"],
-                row["assetId"]
-            )
-            for _, row in df_assets.iterrows()
-        ]
-
-        for future in as_completed(futures):
-            try:
-                data = future.result()
-                if data:
-                    results.extend(data)
-            except Exception as e:
-                logger.error(f"Erro: {e}")
-
-    return results
-
-"""##**5.3. Main**"""
-
-if __name__ == "__main__":
-
-    df_assets = df_assets.dropna(subset=["assetId"])
-    df_assets["shortname"] = df_assets["origem"].map(SHORTNAMES)
-
-    dados = fetch_all_last_measurements(df_assets)
-
-    if not dados:
-        print("Nenhum dado retornado da API")
-    else:
-        df_last_measurement = pd.DataFrame(dados)
-
-        print("\nResumo:")
-        print(df_last_measurement.groupby("origem").size())
-
-        print("\nTotal geral:", len(df_last_measurement))
-
-"""##**5.4. DataFrame**"""
-
-# conversão para datetime
-df_last_measurement = convert_dates(
-    df_last_measurement,
-    ["collectedDate"]
-)
-
-# remoção de timezone
-df_lastmeasurement = remove_timezone(
-    df_last_measurement,
-    ["collectedDate"]
-)
-
-"""##**5.5. Carga no Sheets**"""
-
-# Nome da planilha
-planilha_id = "15TXlKwMk7Q4glMeKVhi5h69sf0dUZnQDFNC68rhqX3Q"
-nome_da_aba = "Sheet1"
-
-# Abre a planilha
-planilha = gc.open_by_key(planilha_id)
-aba = planilha.worksheet(nome_da_aba)
-
-# Limpa a aba antes de escrever os dados (opcional)
-aba.clear()
-
-# Envia o DataFrame para a aba
-set_with_dataframe(aba, df_lastmeasurement)
-
-print("Dados enviados com sucesso para o Google Sheets!")
-
-"""#**6. REQUISIÇÃO: MEASUREMENT BY PERIOD**
-
-##**6.1. Busca com paginação**
-"""
-
-def fetch_measurements_by_asset(shortname, origem, asset_id, start_date, end_date):
-
-    if pd.isna(asset_id):
-        return []
-
-    try:
-        asset_id = int(asset_id)
-    except:
-        return []
-
-    url = f"{BASE_URL}/{shortname}/measurements"
-    all_data = []
-    cursor = None
-    ENDPOINT = "measurements"
-
-    while True:
-
-        expression = f"""
-        {{
-            filter(
-                assetId: {asset_id},
-                collectedDateStart: "{start_date}",
-                collectedDateEnd: "{end_date}"
-                {f", cursor: {cursor}" if cursor else ""}
-            ) {{
-                {FIELDS_MEASUREMENTS}
-            }}
-        }}
-        """
-
-        payload = {"expression": expression}
-
-        response = request_with_retry(
-            url,
-            payload,
-            origem,
-            endpoint=ENDPOINT,
-            asset_id=asset_id
+    def buscar(shortname, origem, asset_id):
+        dados = paginar(
+            f"{shortname}/measurements", FIELDS_MEASUREMENTS, origem,
+            assetId=asset_id, collectedDateStart=inicio, collectedDateEnd=fim,
         )
-
-        result = response.json()
-
-        data = result.get("data", [])
-        next_cursor = result.get("nextCursor")
-
-        for item in data:
-            item["origem"] = origem
+        for item in dados:
             item["assetId"] = asset_id
+        return dados
 
-        all_data.extend(data)
-
-        if not next_cursor:
-            break
-
-        cursor = next_cursor
-
-    return all_data
-
-"""##**6.2. Execução paralela**"""
-
-def fetch_all_measurements(df_assets, start_date, end_date):
-
-    df_assets = df_assets[
-        df_assets["assetStatus"].notna() &
-        (df_assets["assetStatus"] != "None")
-    ]
-
-    results = []
-
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = [
-            executor.submit(
-                fetch_measurements_by_asset,
-                row["shortname"],
-                row["origem"],
-                row["assetId"],
-                start_date,
-                end_date
-            )
-            for _, row in df_assets.iterrows()
-        ]
-
-        for future in as_completed(futures):
-            try:
-                data = future.result()
-                if data:
-                    results.extend(data)
-            except Exception as e:
-                logger.error(f"Erro: {e}")
-
-    return results
-
-"""##**6.3. Main**"""
-
-if __name__ == "__main__":
-
-    # carga manual
-    #start_date = "2026-02-21 00:00:00"
-    #end_date   = "2026-02-21 23:59:59"
-
-    # carga incremental (D-1)
-    ontem = datetime.now(timezone.utc) - timedelta(days=1)
-
-    start_date = ontem.strftime("%Y-%m-%d 00:00:00")
-    end_date   = ontem.strftime("%Y-%m-%d 23:59:59")
-
-    df_assets = df_assets.dropna(subset=["assetId"])
-    df_assets["shortname"] = df_assets["origem"].map(SHORTNAMES)
-
-    dados = fetch_all_measurements(df_assets, start_date, end_date)
-
-    if not dados:
-        print("Nenhum dado retornado da API")
-        df_measurements = pd.DataFrame()
-    else:
-        df_measurements = pd.DataFrame(dados)
-
-        print("\nResumo:")
-        print(df_measurements.groupby("origem").size())
-
-        print("\nTotal geral:", len(df_measurements))
-
-"""##**6.4. DataFrame**"""
-
-# Só trata se houver dados
-if not df_measurements.empty and "collectedDate" in df_measurements.columns:
-
-    # conversão para datetime
-    df_measurements = convert_dates(
-        df_measurements,
-        ["collectedDate"]
+    df = por_ativo(buscar, df_assets)
+    if df.empty:
+        log.warning("Sem medições no período")
+        return df
+    df = converter_datas(df, ["collectedDate"])
+    if pd.api.types.is_datetime64_any_dtype(df["collectedDate"]):
+        df = df.sort_values("collectedDate")
+    # A chave agora inclui collectedDate: antes, duas leituras do mesmo ponto
+    # com o mesmo valor em dias diferentes eram descartadas como "duplicata".
+    anexar_novos(
+        PLANILHAS["measurements"], df,
+        chaves=["assetId", "pointId", "channel", "collectedDate", "overallValue", "origem"],
+        colunas_data=["collectedDate"],
+        nome="measurements",
     )
+    return df
 
-    # remoção de timezone
-    df_measurements = remove_timezone(
-        df_measurements,
-        ["collectedDate"]
-    )
 
-    # ordenação crescente
-    df_measurements = df_measurements.sort_values(by="collectedDate")
-
-else:
-    print("Sem medições para tratamento.")
-
-"""##**6.5. Carga no Sheets**"""
-
-# Nome da planilha e aba
-planilha_id = "1UK6AatDxCdqg8NZxgL8ZThyCSNXOh03_AY4jtGaumXc"
-nome_da_aba = "Sheet1"
-
-# Só processa se houver medições
-if df_measurements.empty:
-    print("Nenhuma medição nova para processar.")
-else:
-    # Abre a planilha e aba
-    planilha = gc.open_by_key(planilha_id)
-    aba = planilha.worksheet(nome_da_aba)
-
-    # Lê dados existentes
-    df_existente = get_as_dataframe(
-        aba,
-        evaluate_formulas=True
-    ).dropna(how="all")
-
-    # Colunas chave para comparação
-    colunas_chave = [
-        'assetId',
-        'assetName',
-        'pointId',
-        'pointName',
-        'channel',
-        'unit',
-        'pointStatus',
-        'overallValue',
-        'origem'
-    ]
-
-    # Se a planilha estiver vazia
-    if df_existente.empty:
-        set_with_dataframe(aba, df_measurements)
-        print(f"{len(df_measurements)} medições inseridas (planilha vazia).")
-
-    else:
-        # garante colunas existentes
-        df_existente = df_existente.reindex(columns=colunas_chave)
-        df_measurements = df_measurements.reindex(columns=colunas_chave)
-
-        # padroniza tipos para comparação segura
-        df_existente = df_existente.astype(str)
-        df_measurements = df_measurements.astype(str)
-
-        # merge para encontrar somente novos
-        df_novos = df_measurements.merge(
-            df_existente,
-            on=colunas_chave,
-            how="left",
-            indicator=True
-        )
-
-        df_novos = df_novos[df_novos["_merge"] == "left_only"].drop(columns=["_merge"])
-
-        if not df_novos.empty:
-            ultima_linha = len(df_existente) + 2
-
-            set_with_dataframe(
-                aba,
-                df_novos,
-                row=ultima_linha,
-                col=1,
-                include_column_header=False
-            )
-
-            print(f"{len(df_novos)} novas medições adicionadas à planilha!")
-
-        else:
-            print("Nenhuma medição nova para inserir")
-
-"""##**6.6. Tratamento de duplicatas**"""
-
-# Nome da planilha e aba
-planilha_id = "1UK6AatDxCdqg8NZxgL8ZThyCSNXOh03_AY4jtGaumXc"
-nome_da_aba = "Sheet1"
-
-# Abre a planilha e aba
-planilha = gc.open_by_key(planilha_id)
-aba = planilha.worksheet(nome_da_aba)
-
-# Lê os dados da aba
-df = get_as_dataframe(aba, evaluate_formulas=True).dropna(how="all")
-
-# Remove duplicatas com base nas colunas chave
-colunas_chave = ['assetId', 'assetName', 'pointId', 'pointName', 'channel', 'unit', 'pointStatus', 'overallValue', 'origem']
-df_limpo = df.drop_duplicates(subset=colunas_chave, keep='first')
-
-# Limpa aba (opcional, mas garante que não fica lixo antigo abaixo)
-aba.clear()
-
-# Reescreve os dados limpos na planilha (com cabeçalho)
-set_with_dataframe(aba, df_limpo, include_column_header=True)
-
-print(f"Removidas {len(df) - len(df_limpo)} duplicatas. Planilha atualizada com {len(df_limpo)} registros únicos.")
-
-"""#**7. REQUISIÇÃO: LAST CONDITION**
-
-##**7.1. Busca por ativo**
-"""
-
-def fetch_last_condition(shortname, origem, asset_id):
-
-    url = f"{BASE_URL}/v2/{shortname}/lastcondition"
-    ENDPOINT = "lastcondition"
-
-    expression = f"""
-    {{
-        filter(assetId: {asset_id}) {{
-            {FIELDS_CONDITIONS}
-        }}
-    }}
-    """
-
-    payload = {"expression": expression}
-
-    response = request_with_retry(
-        url,
-        payload,
-        origem,
-        endpoint=ENDPOINT,
-        asset_id=asset_id
-    )
-
-    data = response.json().get("data", [])
-
-    if not data:
-        logger.warning(f"[{ENDPOINT}] EMPTY | origem={origem} asset={asset_id}")
-        add_log("EMPTY", ENDPOINT, origem, asset_id)
-        return []
-
-    for item in data:
+def _last_condition(shortname, origem, asset_id):
+    dados = consultar(f"v2/{shortname}/lastcondition", _args(assetId=asset_id), FIELDS_CONDITIONS).get("data") or []
+    for item in dados:
         item["origem"] = origem
         item["assetId"] = asset_id
+    return dados
 
-    return data
 
-"""##**7.2. Execução paralela**"""
+def etapa_lastcondition(df_assets):
+    df = por_ativo(_last_condition, df_assets)
+    if df.empty:
+        log.warning("Sem last condition")
+        return df
+    df = extrair_dict(df, "workOrder", "workOrder")      # -> workOrderid (nome mantido)
+    df = converter_datas(df, ["collectDate", "conditionDate"])
+    gravar_aba(PLANILHAS["lastcondition"], df, "lastcondition")
+    return df
 
-from concurrent.futures import ThreadPoolExecutor, as_completed
 
-def fetch_all_last_condition(df_assets):
+def etapa_conditions(df_assets):
+    inicio, fim = _periodo()
 
-    df_assets_ativos = df_assets[
-        (df_assets["assetStatus"].notna()) &
-        (df_assets["assetStatus"] != "None")
-    ]
-
-    results = []
-
-    with ThreadPoolExecutor(max_workers=12) as executor:
-
-        futures = [
-            executor.submit(
-                fetch_last_condition,
-                row["shortname"],
-                row["origem"],
-                row["assetId"]
-            )
-            for _, row in df_assets_ativos.iterrows()
-        ]
-
-        for future in as_completed(futures):
-            try:
-                data = future.result()
-                if data:
-                    results.extend(data)
-            except Exception as e:
-                logger.error(f"Erro: {e}")
-
-    return results
-
-"""##**7.3. Main**"""
-
-if __name__ == "__main__":
-
-    df_assets = df_assets.dropna(subset=["assetId"])
-    df_assets["shortname"] = df_assets["origem"].map(SHORTNAMES)
-
-    dados = fetch_all_last_condition(df_assets)
-
-    if not dados:
-        print("Nenhum dado retornado da API")
-    else:
-        df_last_condition = pd.DataFrame(dados)
-
-        if "workOrder" in df_last_condition.columns:
-            df_workorder = pd.json_normalize(df_last_condition["workOrder"])
-
-        print("\nResumo:")
-        print(df_last_condition.groupby("origem").size())
-
-        print("\nTotal geral:", len(df_last_condition))
-
-"""##**7.4. DataFrame**"""
-
-# separação de dados aninhados
-df_last_condition = df_last_condition.join(
-    pd.json_normalize(df_last_condition["workOrder"]).add_prefix("workOrder")
-    ).drop(columns=["workOrder"]
-)
-
-# conversão para datetime
-df_last_condition = convert_dates(
-    df_last_condition,
-    ["collectDate",
-    "conditionDate"]
-)
-
-# remoção de timezone
-df_lastcondition = remove_timezone(
-    df_last_condition,
-    ["collectDate",
-    "conditionDate"]
-)
-
-"""##**7.5. Carga no Sheets**"""
-
-# Nome da planilha
-planilha_id = "1vxJhkW0Zh0kdxU0tUKnT1nUCRLmI4FeJLcjsQylJk9E"
-nome_da_aba = "Sheet1"
-
-# Abre a planilha
-planilha = gc.open_by_key(planilha_id)
-aba = planilha.worksheet(nome_da_aba)
-
-# Limpa a aba antes de escrever os dados (opcional)
-aba.clear()
-
-# Envia o DataFrame para a aba
-set_with_dataframe(aba, df_lastcondition)
-
-print("Dados enviados com sucesso para o Google Sheets!")
-
-"""#**8. REQUISIÇÃO: CONDITION BY PERIOD**
-
-##**8.1. Busca com paginação**
-"""
-
-def fetch_conditions_by_asset(shortname, origem, asset_id, start_date, end_date):
-
-    if pd.isna(asset_id):
-        return []
-
-    try:
-        asset_id = int(asset_id)
-    except:
-        return []
-
-    url = f"{BASE_URL}/v2/{shortname}/conditions"
-    all_data = []
-    cursor = None
-    ENDPOINT = "conditions"
-
-    while True:
-        if cursor:
-            expression = f"""
-            {{
-                filter(
-                    assetId: {asset_id},
-                    collectedDateStart: "{start_date}",
-                    collectedDateEnd: "{end_date}",
-                    cursor: {cursor}
-                ) {{
-                    {FIELDS_CONDITIONS}
-                }}
-            }}
-            """
-        else:
-            expression = f"""
-            {{
-                filter(
-                    assetId: {asset_id},
-                    collectedDateStart: "{start_date}",
-                    collectedDateEnd: "{end_date}"
-                ) {{
-                    {FIELDS_CONDITIONS}
-                }}
-            }}
-            """
-
-        payload = {"expression": expression}
-
-        response = request_with_retry(
-            url,
-            payload,
-            origem,
-            endpoint=ENDPOINT
+    def buscar(shortname, origem, asset_id):
+        dados = paginar(
+            f"v2/{shortname}/conditions", FIELDS_CONDITIONS, origem,
+            assetId=asset_id, collectedDateStart=inicio, collectedDateEnd=fim,
         )
-
-        result = response.json()
-
-        data = result.get("data", [])
-        next_cursor = result.get("nextCursor")
-
-        for item in data:
-            item["origem"] = origem
+        for item in dados:
             item["assetId"] = asset_id
+        return dados
 
-        all_data.extend(data)
-
-        if not next_cursor:
-            break
-
-        cursor = next_cursor
-
-    logger.info(f"[{ENDPOINT}] FINAL | origem={origem} asset={asset_id} total={len(all_data)}")
-
-    add_log(
-        "FINAL",
-        ENDPOINT,
-        origem,
-        asset_id,
-        mensagem=f"Total registros: {len(all_data)}"
+    df = por_ativo(buscar, df_assets)
+    if df.empty:
+        log.warning("Sem conditions no período")
+        return df
+    df = extrair_dict(df, "workOrder", "workOrder")      # -> workOrderid (nome do cabeçalho atual)
+    df = converter_datas(df, ["collectDate", "conditionDate"])
+    if pd.api.types.is_datetime64_any_dtype(df["conditionDate"]):
+        df = df.sort_values("conditionDate")
+    anexar_novos(
+        PLANILHAS["conditions"], df,
+        chaves=["assetId", "conditionId", "conditionDate", "origem"],
+        colunas_data=["conditionDate"],
+        nome="conditions",
     )
+    return df
 
-    return all_data
 
-"""##**8.2. Execução paralela**"""
+def etapa_workorders():
+    fim = dia_referencia().strftime("%Y-%m-%d 23:59:59")
+    df = por_origem(lambda o, s: paginar(
+        f"{s}/workorders", FIELDS_WORKORDERS, o,
+        openingDateStart="2020-01-01 00:00:00", openingDateEnd=fim,
+    ))
+    if df.empty:
+        log.warning("Nenhum workorder retornado. Planilha não foi alterada.")
+        return df
+    df = extrair_dict(df, "intervention", "intervention_")
+    df = converter_datas(df, ["scheduledDate", "openingDate", "intervention_date"])
+    if pd.api.types.is_datetime64_any_dtype(df["openingDate"]):
+        df = df.sort_values("openingDate")
+    gravar_aba(PLANILHAS["workorders"], df, "workorders")
+    return df
 
-def fetch_all_conditions(df_assets, start_date, end_date):
 
-    df_assets = df_assets[
-        df_assets["assetStatus"].notna() &
-        (df_assets["assetStatus"] != "None")
-    ]
-
-    results = []
-
-    with ThreadPoolExecutor(max_workers=4) as executor:
-        futures = []
-
-        for _, row in df_assets.iterrows():
-            futures.append(
-                executor.submit(
-                    fetch_conditions_by_asset,
-                    row["shortname"],
-                    row["origem"],
-                    row["assetId"],
-                    start_date,
-                    end_date
-                )
-            )
-
-        for future in as_completed(futures):
-            try:
-                results.extend(future.result())
-            except Exception as e:
-                print(f"Erro: {e}")
-
-    return results
-
-"""##**8.3. Main**"""
+# ---------------------------------------------------------------------------
+# MAIN
+# ---------------------------------------------------------------------------
 
 if __name__ == "__main__":
-
-    # carga manual
-    #start_date = "2026-02-21 00:00:00"
-    #end_date   = "2026-02-21 23:59:59"
-
-    # carga incremental (D-1)
-    ontem = datetime.now(timezone.utc) - timedelta(days=1)
-
-    start_date = ontem.strftime("%Y-%m-%d 00:00:00")
-    end_date   = ontem.strftime("%Y-%m-%d 23:59:59")
-
-    df_assets = df_assets.dropna(subset=["assetId"])
-    df_assets["shortname"] = df_assets["origem"].map(SHORTNAMES)
-
-    dados = fetch_all_conditions(df_assets, start_date, end_date)
-
-    if not dados:
-        print("Nenhum dado retornado da API")
-        df_conditions = pd.DataFrame()
-    else:
-        df_conditions = pd.DataFrame(dados)
-
-        print("\nResumo:")
-        print(df_conditions.groupby("origem").size())
-
-        print("\nTotal geral:", len(df_conditions))
-
-"""##**8.4. DataFrame**"""
-
-# Só processa se houver dados
-if not df_conditions.empty:
-
-    # separação de dados aninhados
-    if "workOrder" in df_conditions.columns:
-        df_conditions = df_conditions.join(
-            pd.json_normalize(
-                df_conditions["workOrder"]
-            ).add_prefix("workOrder_")
-        ).drop(columns=["workOrder"])
-
-    # conversão para datetime
-    df_conditions = convert_dates(
-        df_conditions,
-        [
-            "collectDate",
-            "conditionDate"
-        ]
-    )
-
-    # remoção de timezone
-    df_conditions = remove_timezone(
-        df_conditions,
-        [
-            "collectDate",
-            "conditionDate"
-        ]
-    )
-
-    # ordenação
-    if "conditionDate" in df_conditions.columns:
-        df_conditions = df_conditions.sort_values(by="conditionDate")
-
-else:
-    print("Sem conditions para tratamento.")
-
-    df_conditions = pd.DataFrame(columns=[
-        "assetId",
-        "collectDate",
-        "conditionDate",
-        "conditionId",
-        "conditionState",
-        "inspectionType",
-        "trend",
-        "technique",
-        "status",
-        "diagnostic",
-        "observation",
-        "author",
-        "origem",
-        "workOrderid"
-    ])
-
-"""## **8.5. Carga no Sheets**"""
-
-# Nome da planilha e aba
-planilha_id = "1-Hkx_2B5HauY71j0RDYXKS_09Ax34J0Dp6wUGRG32q4"
-nome_da_aba = "Sheet1"
-
-# Só processa se houver condições
-if df_conditions.empty:
-    print("Nenhuma condição nova para processar.")
-
-else:
-    # Abre a planilha e aba
-    planilha = gc.open_by_key(planilha_id)
-    aba = planilha.worksheet(nome_da_aba)
-
-    # Lê os dados existentes
-    df_existente = get_as_dataframe(
-        aba,
-        evaluate_formulas=True
-    ).dropna(how="all")
-
-    # Colunas chave para comparação
-    colunas_chave = [
-        'assetId',
-        'collectDate',
-        'conditionDate',
-        'conditionId',
-        'conditionState',
-        'inspectionType',
-        'trend',
-        'technique',
-        'status',
-        'diagnostic',
-        'observation',
-        'author',
-        'origem',
-        'workOrderid'
-    ]
-
-    # Se planilha estiver vazia
-    if df_existente.empty:
-        set_with_dataframe(aba, df_conditions)
-        print(f"{len(df_conditions)} condições inseridas (planilha vazia).")
-
-    else:
-        # garante colunas
-        df_existente = df_existente.reindex(columns=colunas_chave)
-        df_conditions = df_conditions.reindex(columns=colunas_chave)
-
-        # padroniza tipo para comparação
-        df_existente = df_existente.astype(str)
-        df_conditions = df_conditions.astype(str)
-
-        # compara linha completa
-        df_novos = df_conditions.merge(
-            df_existente,
-            on=colunas_chave,
-            how="left",
-            indicator=True
-        )
-
-        df_novos = df_novos[
-            df_novos["_merge"] == "left_only"
-        ].drop(columns=["_merge"])
-
-        # insere somente novos
-        if not df_novos.empty:
-            ultima_linha = len(df_existente) + 2
-
-            set_with_dataframe(
-                aba,
-                df_novos,
-                row=ultima_linha,
-                col=1,
-                include_column_header=False
-            )
-
-            print(f"{len(df_novos)} novas condições adicionadas à planilha!")
-
-        else:
-            print("Nenhuma condição nova para inserir")
-
-"""## **8.6. Tratamento de duplicatas**"""
-
-# Nome da planilha e aba
-planilha_id = "1-Hkx_2B5HauY71j0RDYXKS_09Ax34J0Dp6wUGRG32q4"
-nome_da_aba = "Sheet1"
-
-# Abre a planilha e aba
-planilha = gc.open_by_key(planilha_id)
-aba = planilha.worksheet(nome_da_aba)
-
-# Lê os dados da aba
-df = get_as_dataframe(aba, evaluate_formulas=True).dropna(how="all")
-
-# Remove duplicatas com base nas colunas chave
-colunas_chave = ['assetId', 'collectDate', 'conditionDate', 'conditionId', 'conditionState', 'inspectionType', 'trend', 'technique', 'status', 'diagnostic', 'observation', 'author', 'origem', 'workOrderid']
-df_limpo = df.drop_duplicates(subset=colunas_chave, keep='first')
-
-# Limpa aba (opcional, mas garante que não fica lixo antigo abaixo)
-aba.clear()
-
-# Reescreve os dados limpos na planilha (com cabeçalho)
-set_with_dataframe(aba, df_limpo, include_column_header=True)
-
-print(f"Removidas {len(df) - len(df_limpo)} duplicatas. Planilha atualizada com {len(df_limpo)} registros únicos.")
-
-"""#**9. REQUISIÇÃO: WORKORDER BY PERIOD**
-
-##**9.1. Busca com paginação**
-"""
-
-def fetch_workorders(shortname, origem, start_date, end_date):
-
-    url = f"{BASE_URL}/{shortname}/workorders"
-    all_data = []
-    cursor = None
-    ENDPOINT = "workorders"
-
-    while True:
-
-        expression = f"""
-        {{
-            filter(
-                openingDateStart: "{start_date}",
-                openingDateEnd: "{end_date}"
-                {f", cursor: {cursor}" if cursor else ""}
-            ) {{
-                {FIELDS_WORKORDERS}
-            }}
-        }}
-        """
-
-        payload = {"expression": expression}
-
-        response = request_with_retry(url, payload, origem, ENDPOINT)
-
-        result = response.json()
-
-        data = result.get("data", [])
-        next_cursor = result.get("nextCursor")
-
-        if not data:
-            logger.warning(f"[{ENDPOINT}] EMPTY | origem={origem}")
-            add_log("EMPTY", ENDPOINT, origem)
-
-        for item in data:
-            item["origem"] = origem
-
-        all_data.extend(data)
-
-        if not next_cursor:
-            break
-
-        cursor = next_cursor
-
-    logger.info(f"[{ENDPOINT}] FINAL | origem={origem} total={len(all_data)}")
-
-    return all_data
-
-"""##**9.2. Execução paralela**"""
-
-def fetch_all_workorders(start_date, end_date):
-    results = []
-
-    with ThreadPoolExecutor(max_workers=2) as executor:
-        futures = {
-            executor.submit(fetch_workorders, short, name, start_date, end_date): name
-            for name, short in SHORTNAMES.items()
-        }
-
-        for future in as_completed(futures):
-            origem = futures[future]
-
-            try:
-                results.extend(future.result())
-            except Exception as e:
-                print(f"Erro em {origem}: {e}")
-
-    return results
-
-"""##**9.3. Main**"""
-
-if __name__ == "__main__":
-
-    # carga completa
-    ontem = datetime.now(timezone.utc) - timedelta(days=1)
-
-    start_date = "2020-01-01 00:00:00"
-    end_date   = ontem.strftime("%Y-%m-%d 23:59:59")
-
-    dados = fetch_all_workorders(start_date, end_date)
-
-    if not dados:
-        print("Nenhum dado retornado da API")
-        df_workorders = pd.DataFrame()
-    else:
-        df_workorders = pd.DataFrame(dados)
-
-        print("\nResumo:")
-        print(df_workorders.groupby("origem").size())
-
-        print("\nTotal geral:", len(df_workorders))
-
-"""##**9.4. DataFrame**"""
-
-# separação de dados aninhados
-df_workorders = df_workorders.join(
-    pd.json_normalize(df_workorders["intervention"]).add_prefix("intervention_")
-    ).drop(columns=["intervention"])
-
-# conversão para datetime
-df_workorders = convert_dates(
-    df_workorders,
-    ["scheduledDate",
-    "openingDate",
-     "intervention_date"]
-)
-
-# remoção de timezone
-df_workorders = remove_timezone(
-    df_workorders,
-    ["scheduledDate",
-    "openingDate",
-     "intervention_date"]
-)
-
-# ordenação crescente
-df_workorders = df_workorders.sort_values(by="openingDate")
-
-"""## **9.5. Carga no Sheets**"""
-
-# Nome da planilha
-planilha_id = "1dM1sHzskTNjd9Wc8wIQTG7dGWgyekVAZM-_wFYQp4tc"
-nome_da_aba = "Sheet1"
-
-# Só processa se houver dados
-if df_workorders.empty:
-    print("Nenhum workorder retornado. Planilha não foi alterada.")
-
-else:
-    # Abre a planilha
-    planilha = gc.open_by_key(planilha_id)
-    aba = planilha.worksheet(nome_da_aba)
-
-    # Limpa a aba antes de escrever os dados
-    aba.clear()
-
-    # Envia o DataFrame para a aba
-    set_with_dataframe(aba, df_workorders)
-
-    print(f"{len(df_workorders)} workorders enviados com sucesso para o Google Sheets!")
-
-"""#**10. LOG**"""
-
-df_log = pd.DataFrame(LOGS)
-
-output_log = {
-    "resumo": df_log["status"].value_counts().to_dict(),
-    "erros": df_log[df_log["status"].isin(["ERROR", "FAIL"])].to_dict(orient="records"),
-    "total": len(df_log),
-    "logs": LOGS
-}
-
-with open("log_execucao.json", "w") as f:
-    json.dump(output_log, f, indent=4)
-
-print("Log gerado")
+    p = Pipeline("cda_offline_skf")
+
+    df_assets = p.etapa("assets", etapa_assets)
+    p.etapa("overall-alarm", etapa_overall)
+    p.etapa("workorders", etapa_workorders)
+
+    dep = ["assets"]
+    p.etapa("lastmeasurement", lambda: etapa_lastmeasurement(df_assets), depende_de=dep)
+    p.etapa("measurements", lambda: etapa_measurements(df_assets), depende_de=dep)
+    p.etapa("lastcondition", lambda: etapa_lastcondition(df_assets), depende_de=dep)
+    p.etapa("conditions", lambda: etapa_conditions(df_assets), depende_de=dep)
+
+    p.finalizar()

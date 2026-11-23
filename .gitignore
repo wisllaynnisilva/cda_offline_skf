@@ -1,0 +1,4 @@
+__pycache__/
+*.pyc
+application_key.json
+log_execucao.json
