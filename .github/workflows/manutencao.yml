@@ -9,7 +9,7 @@ on:
         required: true
         default: 'auditar'
         type: choice
-        options: [auditar, testar_copia, corrigir, aparar]
+        options: [auditar, testar_copia, corrigir, aparar, diagnosticar_apps_script]
       tabelas:
         description: 'Tabelas separadas por vírgula (vazio = todas)'
         required: false

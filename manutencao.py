@@ -318,12 +318,33 @@ def aparar(nome, cfg):
     return r
 
 
+def diagnosticar_apps_script():
+    """Testa a URL do Apps Script: sem credencial e com o token da conta de serviço."""
+    from cda_utils import SESSION, _apps_script, _url_apps_script
+
+    url = _url_apps_script()
+    if not url:
+        print("DIAG: apps_script_url.txt não configurado")
+        return
+    r = SESSION.get(url, params={"acao": "ping"}, timeout=60)
+    corpo = re.sub(r"<[^>]+>", " ", r.text)
+    corpo = re.sub(r"\s+", " ", corpo)[:400]
+    print(f"DIAG sem credencial: HTTP {r.status_code} | {r.headers.get('content-type')} | {corpo}")
+    try:
+        print("DIAG com token da conta de serviço:", _apps_script(acao="ping"))
+    except Exception as exc:  # noqa: BLE001
+        print(f"DIAG com token: {type(exc).__name__}: {exc}")
+
+
 def main():
     modo = (os.getenv("MODO") or "auditar").strip()
     with open(os.path.join(AQUI, "manutencao_tabelas.json"), encoding="utf-8") as f:
         tabelas = json.load(f)
     so = [t.strip() for t in (os.getenv("TABELAS") or "").split(",") if t.strip()]
 
+    if modo == "diagnosticar_apps_script":
+        diagnosticar_apps_script()
+        return
     if modo == "testar_copia":
         testar_copia(tabelas)
         return

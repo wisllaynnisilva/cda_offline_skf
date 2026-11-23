@@ -170,7 +170,12 @@ def http(
             if resp.status_code in STATUS_RETENTAVEIS:
                 raise HTTPRetentavel(f"HTTP {resp.status_code}")
 
-            resp.raise_for_status()
+            if resp.status_code >= 400:
+                # mensagem sem a querystring (pode conter tokens; o log é público)
+                erro = requests.HTTPError(
+                    f"HTTP {resp.status_code} em {_url_curta(url)}", response=resp
+                )
+                raise erro
             return resp
 
         except (HTTPRetentavel, *ERROS_REDE) as exc:
