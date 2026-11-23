@@ -489,7 +489,12 @@ def _anexar_novos(
     while header and not header[-1]:
         header.pop()
 
-    if limite_linhas and len(corpo) + len(novos) > limite_linhas:
+    if limite_linhas and len(corpo) + len(novos) > limite_linhas and not _url_apps_script():
+        log.info(
+            "[%s] %d linhas (limite %d): a rotação revNNN é feita pelo Apps Script "
+            "agendado (apps_script/rotacao.gs)", nome, len(corpo), limite_linhas,
+        )
+    elif limite_linhas and len(corpo) + len(novos) > limite_linhas:
         log.info(
             "[%s] %d linhas + %d novas passam do limite de %d — arquivando revisão",
             nome, len(corpo), len(novos), limite_linhas,
