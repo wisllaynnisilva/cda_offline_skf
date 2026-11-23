@@ -23,6 +23,7 @@ import logging
 import math
 import os
 import random
+import re
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -387,9 +388,14 @@ def _anexar_novos(
     colunas_data=(),
     lote=5000,
     value_input_option="USER_ENTERED",
+    limite_linhas=None,
 ):
     """
     Acrescenta ao final da aba apenas as linhas cuja chave ainda não existe.
+
+    * limite_linhas: se a aba passar desse número de linhas, o arquivo
+      inteiro é arquivado como '<nome> revNNN' e a aba ativa é esvaziada
+      (mantendo cabeçalho e o mesmo ID) antes de gravar as linhas novas.
 
     * Compara as chaves normalizadas (datas -> 'AAAA-MM-DD HH:MM:SS',
       123.0 -> '123', etc.), evitando duplicatas por diferença de tipo.
@@ -404,6 +410,7 @@ def _anexar_novos(
         return 0
 
     colunas_data = set(colunas_data)
+    erro_rotacao = None
     df = df.copy()
     df["_k"] = _chave(df, chaves, colunas_data)
     df = df.drop_duplicates("_k")
@@ -460,6 +467,21 @@ def _anexar_novos(
     while header and not header[-1]:
         header.pop()
 
+    if limite_linhas and len(corpo) + len(novos) > limite_linhas:
+        log.info(
+            "[%s] %d linhas + %d novas passam do limite de %d — arquivando revisão",
+            nome, len(corpo), len(novos), limite_linhas,
+        )
+        try:
+            rotacionar(planilha_id, nome, nome_aba, linhas_esperadas=len(corpo))
+            aba = abrir_aba(planilha_id, nome_aba)
+            corpo = []
+        except Exception as exc:  # noqa: BLE001
+            # não arquivou: grava as linhas do dia mesmo assim (sem perder
+            # dados) e avisa no fim, marcando a etapa como falha
+            log.exception("[%s] arquivamento falhou, aba ativa intacta: %s", nome, exc)
+            erro_rotacao = exc
+
     _checar_limite(len(corpo) + len(novos), len(header), nome)
 
     novos = novos.reindex(columns=header)
@@ -473,7 +495,109 @@ def _anexar_novos(
             table_range="A1",
         )
     log.info("[%s] %d linhas novas anexadas", nome, len(linhas))
+    if erro_rotacao is not None:
+        raise ErroRevisao(
+            f"[{nome}] linhas gravadas, mas o arquivamento (revNNN) falhou: {erro_rotacao}"
+        )
     return len(linhas)
+
+
+# ---------------------------------------------------------------------------
+# Revisões (arquivo morto): <nome> rev000, rev001, ...
+# ---------------------------------------------------------------------------
+
+
+class ErroRevisao(RuntimeError):
+    pass
+
+
+def _drive_get(file_id, campos="id,name,parents"):
+    r = sheets_retry(
+        gc().http_client.request, "get",
+        f"https://www.googleapis.com/drive/v3/files/{file_id}",
+        params={"fields": campos, "supportsAllDrives": "true"},
+    )
+    return r.json()
+
+
+def copiar_planilha(planilha_id, novo_nome):
+    """Copia o arquivo inteiro para a mesma pasta. Devolve o ID da cópia."""
+    info = _drive_get(planilha_id)
+    corpo = {"name": novo_nome}
+    if info.get("parents"):
+        corpo["parents"] = info["parents"]
+    r = sheets_retry(
+        gc().http_client.request, "post",
+        f"https://www.googleapis.com/drive/v3/files/{planilha_id}/copy",
+        params={"supportsAllDrives": "true", "fields": "id,name"},
+        json=corpo,
+    )
+    return r.json()["id"]
+
+
+def excluir_planilha(planilha_id):
+    sheets_retry(
+        gc().http_client.request, "delete",
+        f"https://www.googleapis.com/drive/v3/files/{planilha_id}",
+        params={"supportsAllDrives": "true"},
+    )
+
+
+def proximo_nome_revisao(planilha_id):
+    info = _drive_get(planilha_id)
+    base = info["name"]
+    pasta = (info.get("parents") or [None])[0]
+    q = f"name contains '{base.replace(chr(39), chr(92) + chr(39))} rev' and trashed = false"
+    if pasta:
+        q += f" and '{pasta}' in parents"
+    r = sheets_retry(
+        gc().http_client.request, "get",
+        "https://www.googleapis.com/drive/v3/files",
+        params={"q": q, "fields": "files(name)", "pageSize": 1000,
+                "supportsAllDrives": "true", "includeItemsFromAllDrives": "true"},
+    )
+    numeros = []
+    for f in r.json().get("files", []):
+        m = re.fullmatch(re.escape(base) + r" rev(\d{3,})", f["name"])
+        if m:
+            numeros.append(int(m.group(1)))
+    return f"{base} rev{(max(numeros) + 1) if numeros else 0:03d}"
+
+
+def _contar_linhas(aba):
+    """Linhas de dados (sem o cabeçalho), pela última linha preenchida de qualquer coluna."""
+    valores = sheets_retry(aba.get_all_values)
+    while valores and not any(str(c).strip() for c in valores[-1]):
+        valores.pop()
+    return max(len(valores) - 1, 0)
+
+
+def rotacionar(planilha_id, nome, nome_aba="Sheet1", linhas_esperadas=None):
+    """
+    1. copia o arquivo inteiro como '<nome do arquivo> revNNN';
+    2. confere se a cópia tem as mesmas linhas da aba ativa;
+    3. só então esvazia a aba ativa (mantém o cabeçalho e o mesmo ID).
+    Se qualquer passo falhar, a aba ativa NÃO é alterada.
+    """
+    aba = abrir_aba(planilha_id, nome_aba)
+    originais = _contar_linhas(aba) if linhas_esperadas is None else linhas_esperadas
+    nome_rev = proximo_nome_revisao(planilha_id)
+    copia_id = copiar_planilha(planilha_id, nome_rev)
+
+    copia = sheets_retry(gc().open_by_key, copia_id)
+    aba_copia = sheets_retry(copia.worksheet, nome_aba)
+    na_copia = _contar_linhas(aba_copia)
+    if na_copia != originais:
+        raise ErroRevisao(
+            f"[{nome}] cópia '{nome_rev}' tem {na_copia} linhas, original {originais} — "
+            "aba ativa NÃO foi esvaziada"
+        )
+    log.info("[%s] arquivo arquivado como '%s' (%d linhas conferidas)", nome, nome_rev, na_copia)
+
+    sheets_retry(aba.resize, rows=2)
+    sheets_retry(aba.batch_clear, ["A2:2"])
+    log.info("[%s] aba ativa esvaziada (cabeçalho mantido)", nome)
+    return nome_rev, copia_id
 
 
 # ---------------------------------------------------------------------------

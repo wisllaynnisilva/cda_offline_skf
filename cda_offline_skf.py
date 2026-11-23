@@ -37,6 +37,10 @@ PLANILHAS = {
     "workorders": "1dM1sHzskTNjd9Wc8wIQTG7dGWgyekVAZM-_wFYQp4tc",
 }
 
+# Tabelas históricas: ao passar deste nº de linhas, o arquivo é arquivado como
+# '<nome> revNNN' e a planilha ativa recomeça vazia (mesmo ID/link).
+LIMITE_LINHAS = {"measurements": 400_000, "conditions": 300_000}
+
 FIELDS_ASSETS = """
 assetId assetName assetDescription functionalLocation parentId parentName
 criticality assetStatus assetSegment conditionIndex equipmentType
@@ -264,6 +268,7 @@ def etapa_measurements(df_assets):
         chaves=["assetId", "pointId", "channel", "collectedDate", "overallValue", "origem"],
         colunas_data=["collectedDate"],
         nome="measurements",
+        limite_linhas=LIMITE_LINHAS["measurements"],
     )
     return df
 
@@ -312,6 +317,7 @@ def etapa_conditions(df_assets):
         chaves=["assetId", "conditionId", "conditionDate", "origem"],
         colunas_data=["conditionDate"],
         nome="conditions",
+        limite_linhas=LIMITE_LINHAS["conditions"],
     )
     return df
 

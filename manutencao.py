@@ -18,7 +18,10 @@ from collections import Counter
 
 import pandas as pd
 
-from cda_utils import LIMITE_CELULAS, _chave, abrir_aba, gc, log, sheets_retry
+from cda_utils import (
+    LIMITE_CELULAS, _chave, _contar_linhas, abrir_aba, copiar_planilha,
+    excluir_planilha, gc, log, sheets_retry,
+)
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 TEXTOS_NULOS = {"nan", "NaN", "NaT", "None", "null", "<NA>"}
@@ -141,14 +144,40 @@ def auditar(nome, cfg):
     return r
 
 
+def testar_copia(tabelas):
+    """Copia a menor planilha marcada com "teste_copia", confere e apaga a cópia."""
+    alvos = [(n, c) for n, c in tabelas.items() if c.get("teste_copia")]
+    if not alvos:
+        log.info("Nenhuma tabela marcada para teste de cópia neste repositório")
+        return
+    nome, cfg = alvos[0]
+    aba = abrir_aba(cfg["id"], cfg.get("aba", "Sheet1"))
+    originais = _contar_linhas(aba)
+    try:
+        copia_id = copiar_planilha(cfg["id"], f"{nome} TESTE-COPIA-apagar")
+    except Exception as exc:  # noqa: BLE001
+        print(f"TESTE_COPIA FALHOU ao copiar: {type(exc).__name__}: {str(exc)[:300]}")
+        raise SystemExit(1)
+    try:
+        copia = sheets_retry(gc().open_by_key, copia_id)
+        na_copia = _contar_linhas(sheets_retry(copia.worksheet, cfg.get("aba", "Sheet1")))
+        print(f"TESTE_COPIA OK: original {originais} linhas, copia {na_copia} linhas")
+    finally:
+        excluir_planilha(copia_id)
+        print("TESTE_COPIA: copia apagada")
+
+
 def main():
     modo = (os.getenv("MODO") or "auditar").strip()
     with open(os.path.join(AQUI, "manutencao_tabelas.json"), encoding="utf-8") as f:
         tabelas = json.load(f)
     so = [t.strip() for t in (os.getenv("TABELAS") or "").split(",") if t.strip()]
 
+    if modo == "testar_copia":
+        testar_copia(tabelas)
+        return
     if modo != "auditar":
-        raise SystemExit(f"Modo '{modo}' ainda não implementado — use 'auditar'.")
+        raise SystemExit(f"Modo '{modo}' ainda não implementado.")
 
     resultados = []
     for nome, cfg in tabelas.items():

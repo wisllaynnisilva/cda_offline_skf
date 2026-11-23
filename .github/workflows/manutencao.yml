@@ -5,11 +5,11 @@ on:
   workflow_dispatch:
     inputs:
       modo:
-        description: 'auditar = só leitura'
+        description: 'auditar = só leitura | testar_copia = copia e apaga uma planilha pequena'
         required: true
         default: 'auditar'
         type: choice
-        options: [auditar]
+        options: [auditar, testar_copia]
       tabelas:
         description: 'Tabelas separadas por vírgula (vazio = todas)'
         required: false
