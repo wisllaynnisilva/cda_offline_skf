@@ -58,6 +58,5 @@ jobs:
           DATA_FIM: ${{ inputs.data_fim }}
           ETAPAS: ${{ inputs.etapas }}
           APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
-          APPS_SCRIPT_TOKEN: ${{ secrets.APPS_SCRIPT_TOKEN }}
           PYTHONUNBUFFERED: '1'
         run: python cda_offline_skf.py

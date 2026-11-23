@@ -35,7 +35,6 @@ jobs:
           GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
           MODO: ${{ inputs.modo }}
           APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
-          APPS_SCRIPT_TOKEN: ${{ secrets.APPS_SCRIPT_TOKEN }}
           TABELAS: ${{ inputs.tabelas }}
           PYTHONUNBUFFERED: '1'
         run: python manutencao.py

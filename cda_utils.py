@@ -537,16 +537,37 @@ def _drive_get(file_id, campos="id,name,parents"):
     return r.json()
 
 
+def _url_apps_script():
+    """URL do Apps Script de apoio: secret APPS_SCRIPT_URL ou arquivo apps_script_url.txt."""
+    url = (os.getenv("APPS_SCRIPT_URL") or "").strip()
+    if not url:
+        caminho = os.path.join(os.path.dirname(os.path.abspath(__file__)), "apps_script_url.txt")
+        if os.path.exists(caminho):
+            with open(caminho, encoding="utf-8") as f:
+                url = f.read().strip()
+    return url
+
+
 def _apps_script(**params):
-    """Chama o Apps Script de apoio (apps_script/revisoes.gs), que roda na conta do dono."""
-    url = os.getenv("APPS_SCRIPT_URL")
-    token = os.getenv("APPS_SCRIPT_TOKEN")
-    if not (url and token):
+    """
+    Chama o Apps Script de apoio (apps_script/revisoes.gs), que roda na conta
+    do dono das planilhas. A autenticação é um token de identidade assinado
+    pelo Google para a conta de serviço (nenhum segredo extra é necessário).
+    """
+    url = _url_apps_script()
+    if not url:
         raise ErroRevisao(
             "Cópia indisponível: a conta de serviço não tem espaço no Drive e o Apps Script "
-            "de apoio não está configurado (secrets APPS_SCRIPT_URL e APPS_SCRIPT_TOKEN)"
+            "de apoio ainda não foi configurado (arquivo apps_script_url.txt)"
         )
-    resp = http("GET", url, params={**params, "token": token}, tentativas=4)
+    from google.auth.transport.requests import Request
+    from google.oauth2 import service_account
+
+    cred = service_account.IDTokenCredentials.from_service_account_info(
+        env_json("GOOGLE_SERVICE_ACCOUNT"), target_audience=url
+    )
+    cred.refresh(Request())
+    resp = http("GET", url, params={**params, "id_token": cred.token}, tentativas=4)
     try:
         dados = resp.json()
     except ValueError as exc:
@@ -570,7 +591,7 @@ def copiar_planilha(planilha_id, novo_nome):
     espaço no Drive); sem ele, tenta direto pela API (funciona em Drive
     compartilhado).
     """
-    if os.getenv("APPS_SCRIPT_URL"):
+    if _url_apps_script():
         return _apps_script(
             acao="copiar", id=planilha_id, nome=novo_nome, leitor=_email_conta_servico()
         )["id"]
@@ -589,7 +610,7 @@ def copiar_planilha(planilha_id, novo_nome):
 
 def excluir_planilha(planilha_id):
     """Só usado para apagar cópias de teste."""
-    if os.getenv("APPS_SCRIPT_URL"):
+    if _url_apps_script():
         _apps_script(acao="apagar_teste", id=planilha_id)
         return
     sheets_retry(
