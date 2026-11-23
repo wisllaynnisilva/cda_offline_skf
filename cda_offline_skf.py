@@ -14,7 +14,7 @@ import pandas as pd
 
 from cda_utils import (
     Pipeline, anexar_novos, dia_referencia, env_json, env_obrigatoria,
-    gravar_aba, http, log,
+    gravar_aba, http, log, periodo_referencia,
 )
 
 # ---------------------------------------------------------------------------
@@ -237,9 +237,9 @@ def etapa_lastmeasurement(df_assets):
 
 
 def _periodo():
-    dia = dia_referencia()
-    log.info("Período de referência: %s", dia)
-    return dia.strftime("%Y-%m-%d 00:00:00"), dia.strftime("%Y-%m-%d 23:59:59")
+    ini, fim = periodo_referencia()
+    log.info("Período de referência: %s a %s", ini, fim)
+    return ini.strftime("%Y-%m-%d 00:00:00"), fim.strftime("%Y-%m-%d 23:59:59")
 
 
 def etapa_measurements(df_assets):

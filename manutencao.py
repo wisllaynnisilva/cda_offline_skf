@@ -18,10 +18,14 @@ from collections import Counter
 
 import pandas as pd
 
+from datetime import date, datetime, timedelta
+
 from cda_utils import (
     LIMITE_CELULAS, _chave, _contar_linhas, abrir_aba, copiar_planilha,
     excluir_planilha, gc, log, sheets_retry,
 )
+
+ORIGENS = {"ubu", "germano"}
 
 AQUI = os.path.dirname(os.path.abspath(__file__))
 TEXTOS_NULOS = {"nan", "NaN", "NaT", "None", "null", "<NA>"}
@@ -167,6 +171,116 @@ def testar_copia(tabelas):
         print("TESTE_COPIA: copia apagada")
 
 
+# ---------------------------------------------------------------------------
+# CORREÇÃO
+# ---------------------------------------------------------------------------
+
+def fazer_backup(nome, cfg, aba, planilha):
+    """Aba de backup no mesmo arquivo se couber no limite; senão cópia do arquivo."""
+    hoje = date.today().strftime("%Y%m%d")
+    abas = sheets_retry(planilha.worksheets)
+    grade = sum(a.row_count * a.col_count for a in abas)
+    if grade + aba.row_count * aba.col_count <= LIMITE_CELULAS * 0.9:
+        titulo = f"backup_correcao_{hoje}"
+        if titulo in [a.title for a in abas]:
+            log.info("[%s] backup '%s' já existe — reaproveitado", nome, titulo)
+            return f"aba '{titulo}'"
+        sheets_retry(aba.duplicate, new_sheet_name=titulo, insert_sheet_index=len(abas))
+        return f"aba '{titulo}' no mesmo arquivo"
+    info_nome = sheets_retry(lambda: planilha.title)
+    copiar_planilha(cfg["id"], f"{info_nome} backup-correcao-{hoje}")
+    return f"cópia '{info_nome} backup-correcao-{hoje}'"
+
+
+def _data_serial(v):
+    if isinstance(v, (int, float)) and not isinstance(v, bool) and 36526 <= v <= 54789:
+        return (datetime(1899, 12, 30) + timedelta(days=float(v))).date()
+    return None
+
+
+def corrigir(nome, cfg):
+    regras = cfg.get("correcao") or {}
+    if not regras:
+        return {"tabela": nome, "correcao": "nenhuma regra configurada"}
+    planilha = sheets_retry(gc().open_by_key, cfg["id"])
+    aba = sheets_retry(planilha.worksheet, cfg.get("aba", "Sheet1"))
+    valores = ler_tudo(aba)
+    if not valores:
+        return {"tabela": nome, "correcao": "aba vazia"}
+
+    header = [str(c).strip() for c in valores[0]]
+    largura = max(len(header), max(len(l) for l in valores))
+    linhas = [list(l) + [""] * (largura - len(l)) for l in valores[1:]]
+    r = {"tabela": nome, "linhas_antes": len(linhas), "grade_linhas_antes": aba.row_count}
+
+    if regras.get("so_aparar_grade"):
+        if aba.row_count > len(linhas) + 1:
+            sheets_retry(aba.resize, rows=len(linhas) + 1)
+        r["grade_linhas_depois"] = len(linhas) + 1
+        r["correcao"] = "linhas vazias da grade removidas (dados intactos)"
+        return r
+
+    if regras.get("remover_desalinhadas_measurements"):
+        i_val, i_ori, i_dt = header.index("overallValue"), header.index("origem"), header.index("collectedDate")
+        ruins = [
+            j for j, l in enumerate(linhas)
+            if str(l[i_ori]).strip() == "" and str(l[i_val]).strip().lower() in ORIGENS
+        ]
+        ruins_set = set(ruins)
+        bons = [l for j, l in enumerate(linhas) if j not in ruins_set]
+        datas = [d for d in (_data_serial(l[i_dt]) for l in bons) if d]
+        r["linhas_desalinhadas_removidas"] = len(ruins)
+        if ruins:
+            antes = [d for d in (_data_serial(l[i_dt]) for l in linhas[: ruins[0]]) if d]
+            r["REPROCESSAR_DE"] = str(max(antes)) if antes else None
+            r["ultima_data_valida"] = str(max(datas)) if datas else None
+        linhas = bons
+
+    if regras.get("limpar_textos_nulos"):
+        n = 0
+        for l in linhas:
+            for j, v in enumerate(l):
+                if isinstance(v, str) and v.strip() in TEXTOS_NULOS:
+                    l[j] = ""
+                    n += 1
+        r["textos_nulos_limpos"] = n
+
+    dedup = regras.get("deduplicar")  # "primeira" ou "ultima"
+    if dedup:
+        nomes = [h or f"__col{j}" for j, h in enumerate(header + [""] * (largura - len(header)))]
+        for extra in cfg.get("colunas_sem_titulo", []):
+            vagas = [j for j, h in enumerate(header + [""] * (largura - len(header))) if not h]
+            if vagas:
+                nomes[vagas[0]] = extra
+        df = pd.DataFrame(linhas, columns=nomes)
+        chaves = cfg.get("chaves") or list(df.columns)
+        k = _chave(df, chaves, set(cfg.get("colunas_data", [])))
+        manter = ~k.duplicated(keep="first" if dedup == "primeira" else "last")
+        r["duplicatas_removidas"] = int((~manter).sum())
+        linhas = [l for l, m in zip(linhas, manter.tolist()) if m]
+
+    if len(linhas) == r["linhas_antes"] and not r.get("textos_nulos_limpos"):
+        r["correcao"] = "nada a corrigir"
+        return r
+
+    r["backup"] = fazer_backup(nome, cfg, aba, planilha)
+
+    # regrava a partir da linha 2 em blocos (RAW mantém os tipos lidos) e encolhe a grade
+    for ini in range(0, len(linhas), 20_000):
+        bloco = linhas[ini : ini + 20_000]
+        sheets_retry(aba.update, bloco, f"A{ini + 2}", value_input_option="RAW")
+    sheets_retry(aba.resize, rows=max(len(linhas) + 1, 2))
+    if not linhas:
+        sheets_retry(aba.batch_clear, ["A2:2"])
+
+    conferido = _contar_linhas(aba)
+    r["linhas_depois"] = conferido
+    if conferido != len(linhas):
+        r["ALERTA"] = f"esperado {len(linhas)} linhas, encontrado {conferido} — use o backup"
+    r["correcao"] = "ok"
+    return r
+
+
 def main():
     modo = (os.getenv("MODO") or "auditar").strip()
     with open(os.path.join(AQUI, "manutencao_tabelas.json"), encoding="utf-8") as f:
@@ -175,6 +289,22 @@ def main():
 
     if modo == "testar_copia":
         testar_copia(tabelas)
+        return
+    if modo == "corrigir":
+        if not so:
+            raise SystemExit("No modo corrigir informe as tabelas explicitamente.")
+        falhou = False
+        for nome in so:
+            try:
+                r = corrigir(nome, tabelas[nome])
+            except Exception as exc:  # noqa: BLE001
+                log.exception("[%s] correção falhou: %s", nome, exc)
+                r = {"tabela": nome, "erro": f"{type(exc).__name__}: {exc}"}
+                falhou = True
+            print("CORRECAO " + json.dumps(r, ensure_ascii=False, default=str), flush=True)
+            falhou = falhou or "ALERTA" in r
+        if falhou:
+            raise SystemExit(1)
         return
     if modo != "auditar":
         raise SystemExit(f"Modo '{modo}' ainda não implementado.")

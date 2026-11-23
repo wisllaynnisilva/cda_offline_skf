@@ -5,11 +5,11 @@ on:
   workflow_dispatch:
     inputs:
       modo:
-        description: 'auditar = só leitura | testar_copia = copia e apaga uma planilha pequena'
+        description: 'auditar = só leitura | testar_copia = copia e apaga uma planilha pequena | corrigir = backup + correção (informe as tabelas)'
         required: true
         default: 'auditar'
         type: choice
-        options: [auditar, testar_copia]
+        options: [auditar, testar_copia, corrigir]
       tabelas:
         description: 'Tabelas separadas por vírgula (vazio = todas)'
         required: false
@@ -34,6 +34,8 @@ jobs:
         env:
           GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
           MODO: ${{ inputs.modo }}
+          APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
+          APPS_SCRIPT_TOKEN: ${{ secrets.APPS_SCRIPT_TOKEN }}
           TABELAS: ${{ inputs.tabelas }}
           PYTHONUNBUFFERED: '1'
         run: python manutencao.py

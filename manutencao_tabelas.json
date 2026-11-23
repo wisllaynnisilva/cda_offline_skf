@@ -49,6 +49,11 @@
         "ubu",
         "germano"
       ]
+    },
+    "correcao": {
+      "remover_desalinhadas_measurements": true,
+      "limpar_textos_nulos": true,
+      "deduplicar": "primeira"
     }
   },
   "lastcondition": {
@@ -77,6 +82,10 @@
         "ubu",
         "germano"
       ]
+    },
+    "correcao": {
+      "limpar_textos_nulos": true,
+      "deduplicar": "ultima"
     }
   },
   "workorders": {

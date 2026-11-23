@@ -11,6 +11,18 @@ on:
         description: 'Dia a (re)processar nas cargas incrementais, AAAA-MM-DD (vazio = ontem)'
         required: false
         default: ''
+      data_inicio:
+        description: 'Reprocessar período: data inicial AAAA-MM-DD (usar junto com data_fim)'
+        required: false
+        default: ''
+      data_fim:
+        description: 'Reprocessar período: data final AAAA-MM-DD'
+        required: false
+        default: ''
+      etapas:
+        description: 'Rodar só estas etapas, separadas por vírgula (vazio = todas)'
+        required: false
+        default: ''
 
 # Nunca roda duas execuções ao mesmo tempo (evita escrita concorrente nas planilhas)
 concurrency:
@@ -42,5 +54,10 @@ jobs:
           SKF_SHORTNAMES: ${{ secrets.SKF_SHORTNAMES }}
           SKF_URL: ${{ secrets.SKF_URL }}
           DATA_REFERENCIA: ${{ inputs.data_referencia }}
+          DATA_INICIO: ${{ inputs.data_inicio }}
+          DATA_FIM: ${{ inputs.data_fim }}
+          ETAPAS: ${{ inputs.etapas }}
+          APPS_SCRIPT_URL: ${{ secrets.APPS_SCRIPT_URL }}
+          APPS_SCRIPT_TOKEN: ${{ secrets.APPS_SCRIPT_TOKEN }}
           PYTHONUNBUFFERED: '1'
         run: python cda_offline_skf.py

@@ -75,6 +75,23 @@ def dia_referencia():
     return (datetime.now(timezone.utc) - timedelta(days=1)).date()
 
 
+def periodo_referencia():
+    """
+    (início, fim) das cargas incrementais. Padrão: (ontem, ontem).
+    Com DATA_INICIO e DATA_FIM (AAAA-MM-DD) reprocessa um período inteiro.
+    """
+    ini = (os.getenv("DATA_INICIO") or "").strip()
+    fim = (os.getenv("DATA_FIM") or "").strip()
+    if ini and fim:
+        a = datetime.strptime(ini, "%Y-%m-%d").date()
+        b = datetime.strptime(fim, "%Y-%m-%d").date()
+        if a > b:
+            raise ValueError("DATA_INICIO maior que DATA_FIM")
+        return a, b
+    dia = dia_referencia()
+    return dia, dia
+
+
 # ---------------------------------------------------------------------------
 # HTTP
 # ---------------------------------------------------------------------------
@@ -520,8 +537,43 @@ def _drive_get(file_id, campos="id,name,parents"):
     return r.json()
 
 
+def _apps_script(**params):
+    """Chama o Apps Script de apoio (apps_script/revisoes.gs), que roda na conta do dono."""
+    url = os.getenv("APPS_SCRIPT_URL")
+    token = os.getenv("APPS_SCRIPT_TOKEN")
+    if not (url and token):
+        raise ErroRevisao(
+            "Cópia indisponível: a conta de serviço não tem espaço no Drive e o Apps Script "
+            "de apoio não está configurado (secrets APPS_SCRIPT_URL e APPS_SCRIPT_TOKEN)"
+        )
+    resp = http("GET", url, params={**params, "token": token}, tentativas=4)
+    try:
+        dados = resp.json()
+    except ValueError as exc:
+        raise ErroRevisao("Apps Script não devolveu JSON (verifique a implantação/URL)") from exc
+    if not dados.get("ok"):
+        raise ErroRevisao(f"Apps Script recusou: {dados.get('erro')}")
+    return dados
+
+
+def _email_conta_servico():
+    try:
+        return env_json("GOOGLE_SERVICE_ACCOUNT").get("client_email", "")
+    except Exception:  # noqa: BLE001
+        return ""
+
+
 def copiar_planilha(planilha_id, novo_nome):
-    """Copia o arquivo inteiro para a mesma pasta. Devolve o ID da cópia."""
+    """
+    Copia o arquivo inteiro para a mesma pasta. Devolve o ID da cópia.
+    Usa o Apps Script de apoio quando configurado (a conta de serviço não tem
+    espaço no Drive); sem ele, tenta direto pela API (funciona em Drive
+    compartilhado).
+    """
+    if os.getenv("APPS_SCRIPT_URL"):
+        return _apps_script(
+            acao="copiar", id=planilha_id, nome=novo_nome, leitor=_email_conta_servico()
+        )["id"]
     info = _drive_get(planilha_id)
     corpo = {"name": novo_nome}
     if info.get("parents"):
@@ -536,6 +588,10 @@ def copiar_planilha(planilha_id, novo_nome):
 
 
 def excluir_planilha(planilha_id):
+    """Só usado para apagar cópias de teste."""
+    if os.getenv("APPS_SCRIPT_URL"):
+        _apps_script(acao="apagar_teste", id=planilha_id)
+        return
     sheets_retry(
         gc().http_client.request, "delete",
         f"https://www.googleapis.com/drive/v3/files/{planilha_id}",
@@ -613,11 +669,16 @@ class Pipeline:
 
     def __init__(self, nome):
         self.nome = nome
+        # ETAPAS=assets,measurements -> roda só essas (execução manual)
+        self.somente = {e.strip() for e in (os.getenv("ETAPAS") or "").split(",") if e.strip()}
         self.resultados = {}
         self.falhas = {}
         self.inicio = time.time()
 
     def etapa(self, nome, func, depende_de=()):
+        if self.somente and nome not in self.somente:
+            log.info("[%s] não solicitada nesta execução (ETAPAS)", nome)
+            return None
         faltando = [d for d in depende_de if d not in self.resultados]
         if faltando:
             log.error("[%s] PULADA — depende de etapa(s) com falha: %s", nome, faltando)
