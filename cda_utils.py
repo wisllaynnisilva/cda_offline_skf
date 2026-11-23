@@ -22,6 +22,7 @@ import json
 import logging
 import math
 import os
+import random
 import sys
 import time
 from datetime import datetime, timedelta, timezone
@@ -206,8 +207,16 @@ def gc():
     return _gc
 
 
-def sheets_retry(func, *args, tentativas=6, **kwargs):
-    """Executa uma chamada do gspread com retry em 429/5xx/erros de rede."""
+class SheetsIndisponivel(RuntimeError):
+    """O Google Sheets continuou fora do ar mesmo após todas as tentativas."""
+
+
+def sheets_retry(func, *args, tentativas=8, **kwargs):
+    """
+    Executa uma chamada do gspread com retry em 429/5xx/erros de rede.
+    Esperas: 10, 20, 40, 80, 120, 120, 120 s (~8 min no total) + variação
+    aleatória, cobrindo as instabilidades curtas do Google (503/502).
+    """
     for tentativa in range(1, tentativas + 1):
         try:
             return func(*args, **kwargs)
@@ -215,14 +224,16 @@ def sheets_retry(func, *args, tentativas=6, **kwargs):
             codigo = getattr(exc, "code", None)
             # -1 = resposta HTML (ex.: 502 do Google), não JSON
             retentavel = codigo in (-1, 408, 429) or (codigo or 0) >= 500
-            if not retentavel or tentativa == tentativas:
+            if not retentavel:
                 raise
+            if tentativa == tentativas:
+                raise SheetsIndisponivel(f"Google Sheets indisponível: APIError {codigo}") from exc
             erro = f"APIError {codigo}"
         except ERROS_REDE as exc:
             if tentativa == tentativas:
-                raise
+                raise SheetsIndisponivel(f"Google Sheets indisponível: {exc}") from exc
             erro = type(exc).__name__
-        espera = min(5 * 2 ** tentativa, 120)
+        espera = min(5 * 2 ** tentativa, 120) + random.uniform(0, 5)
         log.warning(
             "Sheets: %s (tentativa %d/%d) — aguardando %ds",
             erro, tentativa, tentativas, espera,
@@ -230,9 +241,31 @@ def sheets_retry(func, *args, tentativas=6, **kwargs):
         time.sleep(espera)
 
 
+_abas = {}
+
+
 def abrir_aba(planilha_id, nome_aba="Sheet1"):
-    planilha = sheets_retry(gc().open_by_key, planilha_id)
-    return sheets_retry(planilha.worksheet, nome_aba)
+    """Abre a aba (com cache: cada planilha é aberta só uma vez por execução)."""
+    chave = (planilha_id, nome_aba)
+    if chave not in _abas:
+        planilha = sheets_retry(gc().open_by_key, planilha_id)
+        _abas[chave] = sheets_retry(planilha.worksheet, nome_aba)
+    return _abas[chave]
+
+
+# Gravações que falharam porque o Google ficou fora do ar. Os dados já foram
+# coletados (e a cota das APIs já foi gasta), então não são descartados: o
+# Pipeline tenta gravá-los de novo no fim da execução.
+PENDENTES = []
+
+
+def com_pendencia(rotulo, func, /, *args, **kwargs):
+    try:
+        return func(*args, **kwargs)
+    except SheetsIndisponivel as exc:
+        log.error("[%s] %s — gravação adiada para o fim da execução", rotulo, exc)
+        PENDENTES.append((rotulo, func, args, kwargs))
+        return None
 
 
 def _checar_limite(df_linhas, df_colunas, nome):
@@ -246,6 +279,10 @@ def _checar_limite(df_linhas, df_colunas, nome):
 
 
 def gravar_aba(planilha_id, df, nome="tabela", nome_aba="Sheet1", permitir_vazio=False):
+    return com_pendencia(nome, _gravar_aba, planilha_id, df, nome, nome_aba, permitir_vazio)
+
+
+def _gravar_aba(planilha_id, df, nome, nome_aba, permitir_vazio):
     """
     Substitui o conteúdo da aba pelo DataFrame, de forma segura:
       * se o DataFrame estiver vazio, NÃO mexe na planilha (a menos que
@@ -337,7 +374,11 @@ def _para_celula(v):
     return v
 
 
-def anexar_novos(
+def anexar_novos(planilha_id, df, chaves, nome="tabela", **kwargs):
+    return com_pendencia(nome, _anexar_novos, planilha_id, df, chaves, nome=nome, **kwargs)
+
+
+def _anexar_novos(
     planilha_id,
     df,
     chaves,
@@ -470,7 +511,26 @@ class Pipeline:
         log.info("===== [%s] ok em %.0fs =====", nome, time.time() - t0)
         return resultado
 
+    def _reprocessar_pendentes(self, espera=300):
+        if not PENDENTES:
+            return
+        log.warning(
+            "%d gravação(ões) no Sheets pendente(s) — aguardando %ds e tentando de novo",
+            len(PENDENTES), espera,
+        )
+        time.sleep(espera)
+        _abas.clear()  # reabre as planilhas do zero
+        while PENDENTES:
+            nome, func, args, kwargs = PENDENTES.pop(0)
+            try:
+                func(*args, **kwargs)
+                log.info("[%s] gravação pendente concluída", nome)
+            except Exception as exc:  # noqa: BLE001
+                log.exception("[%s] gravação pendente falhou de novo: %s", nome, exc)
+                self.falhas[f"{nome} (gravação no Sheets)"] = f"{type(exc).__name__}: {exc}"
+
     def finalizar(self):
+        self._reprocessar_pendentes()
         dur = time.time() - self.inicio
         log.info("Resumo %s (%.0f min):", self.nome, dur / 60)
         for nome in self.resultados:
