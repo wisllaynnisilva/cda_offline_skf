@@ -175,8 +175,12 @@ def testar_copia(tabelas):
 # CORREÇÃO
 # ---------------------------------------------------------------------------
 
-def fazer_backup(nome, cfg, aba, planilha):
-    """Aba de backup no mesmo arquivo se couber no limite; senão cópia do arquivo."""
+def fazer_backup(nome, cfg, aba, planilha, valores=None):
+    """
+    Aba de backup no mesmo arquivo se couber no limite; senão cópia do arquivo.
+    Abas pequenas são duplicadas; abas grandes (> 1 milhão de células) têm os
+    valores copiados em blocos (duplicar de uma vez estoura o tempo do Google).
+    """
     hoje = date.today().strftime("%Y%m%d")
     abas = sheets_retry(planilha.worksheets)
     grade = sum(a.row_count * a.col_count for a in abas)
@@ -185,8 +189,22 @@ def fazer_backup(nome, cfg, aba, planilha):
         if titulo in [a.title for a in abas]:
             log.info("[%s] backup '%s' já existe — reaproveitado", nome, titulo)
             return f"aba '{titulo}'"
-        sheets_retry(aba.duplicate, new_sheet_name=titulo, insert_sheet_index=len(abas))
-        return f"aba '{titulo}' no mesmo arquivo"
+        if valores is None or aba.row_count * aba.col_count <= 1_000_000:
+            sheets_retry(aba.duplicate, new_sheet_name=titulo, insert_sheet_index=len(abas))
+            return f"aba '{titulo}' no mesmo arquivo"
+        largura = max(len(l) for l in valores)
+        nova = sheets_retry(planilha.add_worksheet, title=titulo, rows=len(valores), cols=largura)
+        try:
+            for ini in range(0, len(valores), 20_000):
+                bloco = [list(l) + [""] * (largura - len(l)) for l in valores[ini : ini + 20_000]]
+                sheets_retry(nova.update, bloco, f"A{ini + 1}", value_input_option="RAW")
+            copiadas = _contar_linhas(nova) + 1
+            if copiadas != len(valores):
+                raise RuntimeError(f"backup com {copiadas} linhas, esperado {len(valores)}")
+        except Exception:
+            sheets_retry(planilha.del_worksheet, nova)   # não deixa backup incompleto
+            raise
+        return f"aba '{titulo}' no mesmo arquivo ({len(valores)} linhas copiadas em blocos)"
     info_nome = sheets_retry(lambda: planilha.title)
     copiar_planilha(cfg["id"], f"{info_nome} backup-correcao-{hoje}")
     return f"cópia '{info_nome} backup-correcao-{hoje}'"
@@ -263,7 +281,7 @@ def corrigir(nome, cfg):
         r["correcao"] = "nada a corrigir"
         return r
 
-    r["backup"] = fazer_backup(nome, cfg, aba, planilha)
+    r["backup"] = fazer_backup(nome, cfg, aba, planilha, valores)
 
     # regrava a partir da linha 2 em blocos (RAW mantém os tipos lidos) e encolhe a grade
     for ini in range(0, len(linhas), 20_000):
