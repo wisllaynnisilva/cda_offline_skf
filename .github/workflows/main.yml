@@ -1,10 +1,14 @@
 name: cda_offline_skf
+run-name: "${{ (inputs.data_referencia != '' || inputs.data_inicio != '' || inputs.etapas != '') && 'reprocessamento' || 'carga diária' }}"
 
 on:
   schedule:
-    # Minuto "quebrado" de propósito: agendamentos em hora cheia (minuto 0)
-    # são os mais atrasados/descartados pelo GitHub em horários de pico.
-    - cron: '13 6 * * *'  # todo dia ~03:13 no Brasil (UTC-3)
+    # 3 tentativas por dia (o agendador do GitHub atrasa e às vezes descarta
+    # disparos). Só a primeira roda de fato: as outras param na trava
+    # .github/ja_rodou_hoje.py. Horários de Brasília: 03:13, 07:13, 11:13.
+    - cron: '13 6 * * *'
+    - cron: '13 10 * * *'
+    - cron: '13 14 * * *'
   workflow_dispatch:
     inputs:
       data_referencia:
@@ -29,6 +33,10 @@ concurrency:
   group: ${{ github.workflow }}
   cancel-in-progress: false
 
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   run:
     runs-on: ubuntu-latest
@@ -38,16 +46,26 @@ jobs:
       - name: Checkout do repositório
         uses: actions/checkout@v5
 
+      - name: Trava (já rodou hoje?)
+        id: trava
+        if: github.event_name == 'schedule'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python .github/ja_rodou_hoje.py
+
       - name: Configurar Python
+        if: steps.trava.outputs.pular != 'true'
         uses: actions/setup-python@v6
         with:
           python-version: '3.13'
           cache: pip
 
       - name: Instalar dependências
+        if: steps.trava.outputs.pular != 'true'
         run: pip install -r requirements.txt
 
       - name: Executar script
+        if: steps.trava.outputs.pular != 'true'
         env:
           GOOGLE_SERVICE_ACCOUNT: ${{ secrets.GOOGLE_SERVICE_ACCOUNT }}
           SKF_KEY: ${{ secrets.SKF_KEY }}

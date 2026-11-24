@@ -692,6 +692,15 @@ def rotacionar(planilha_id, nome, nome_aba="Sheet1", linhas_esperadas=None):
 # ---------------------------------------------------------------------------
 
 
+AVISOS = []
+
+
+def avisar(mensagem):
+    """Situação conhecida que não é falha (aparece como ⚠️ no resumo, job continua verde)."""
+    log.warning("AVISO: %s", mensagem)
+    AVISOS.append(mensagem)
+
+
 class Pipeline:
     """
     Executa etapas de forma isolada. Uma etapa que falha é registrada e as
@@ -751,6 +760,8 @@ class Pipeline:
         log.info("Resumo %s (%.0f min):", self.nome, dur / 60)
         for nome in self.resultados:
             log.info("  OK     %s", nome)
+        for aviso in AVISOS:
+            log.warning("  AVISO  %s", aviso)
         for nome, erro in self.falhas.items():
             log.error("  FALHA  %s — %s", nome, erro)
 
@@ -760,6 +771,8 @@ class Pipeline:
                 f.write(f"## {self.nome}\n\n| etapa | status |\n|---|---|\n")
                 for nome in self.resultados:
                     f.write(f"| {nome} | ✅ |\n")
+                for aviso in AVISOS:
+                    f.write(f"| aviso | ⚠️ {aviso[:300]} |\n")
                 for nome, erro in self.falhas.items():
                     erro_md = erro.replace("|", "/").replace("\n", " ")[:300]
                     f.write(f"| {nome} | ❌ {erro_md} |\n")
